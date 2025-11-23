@@ -1,7 +1,7 @@
 // UI Module
 // Functions to manage the transcript panel interface
 
-const TranscriptUI = (function() {
+const TranscriptUI = (function () {
   'use strict';
 
   let transcriptData = [];
@@ -62,31 +62,29 @@ const TranscriptUI = (function() {
   function resetTranscriptPanel() {
     const panel = document.getElementById('yt-transcript-panel');
     if (!panel) return;
-    
+
     // Stop video sync
     VideoSync.stopVideoSync();
-    
+
     // Clear state
     transcriptData = [];
     currentSearchTerm = '';
     isPanelMinimized = false;
     availableLanguages = [];
-    
+
     const button = document.getElementById('load-transcript-btn');
     const refreshBtn = document.getElementById('refresh-transcript-btn');
     const searchContainer = document.getElementById('search-container');
     const languageSelectorContainer = document.getElementById('language-selector-container');
     const container = document.getElementById('transcript-content');
     const minimizeBtn = document.getElementById('minimize-panel-btn');
-    
+
     // Restore load button
     if (button) {
-      button.style.display = 'block';
+      button.style.display = 'flex';
       button.disabled = false;
       button.innerHTML = `
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M8 2a6 6 0 100 12A6 6 0 008 2zm0 1a5 5 0 110 10A5 5 0 018 3zm-.5 2.5v3h3v1h-4v-4h1z"/>
-        </svg>
+        <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
         Load Transcript
       `;
     }
@@ -96,7 +94,7 @@ const TranscriptUI = (function() {
       refreshBtn.style.display = 'none';
       refreshBtn.disabled = false;
     }
-    
+
     // Hide language selector
     if (languageSelectorContainer) {
       languageSelectorContainer.style.display = 'none';
@@ -105,7 +103,7 @@ const TranscriptUI = (function() {
         languageSelect.innerHTML = '';
       }
     }
-    
+
     // Hide and clear search
     if (searchContainer) {
       searchContainer.style.display = 'none';
@@ -114,37 +112,35 @@ const TranscriptUI = (function() {
         searchInput.value = '';
       }
     }
-    
+
     // Restore panel state (expanded)
     if (minimizeBtn) {
       minimizeBtn.innerHTML = `
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M4 8l4 4 4-4H4z"/>
-        </svg>
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       `;
       minimizeBtn.title = 'Minimize transcript';
     }
-    
+
     if (panel) {
       panel.style.maxHeight = '';
     }
-    
+
     // Clear content and show instructions
     if (container) {
       container.style.display = 'block';
-      
+
       // Force complete cleanup
       while (container.firstChild) {
         container.removeChild(container.firstChild);
       }
-      
+
       container.innerHTML = `
         <div class="transcript-instructions">
           <p>📝 Click "Load Transcript" to fetch the video captions</p>
           <p class="transcript-tip">💡 Tip: You can select different languages after loading</p>
         </div>
       `;
-      
+
       // Remove all scroll listeners by cloning
       const newContainer = container.cloneNode(true);
       container.parentNode.replaceChild(newContainer, container);
@@ -159,7 +155,7 @@ const TranscriptUI = (function() {
     const content = document.getElementById('transcript-content');
     const searchContainer = document.getElementById('search-container');
     const toggleBtn = document.getElementById('minimize-panel-btn');
-    
+
     if (!panel || !content || !toggleBtn) return;
 
     isPanelMinimized = !isPanelMinimized;
@@ -169,9 +165,7 @@ const TranscriptUI = (function() {
       content.style.display = 'none';
       if (searchContainer) searchContainer.style.display = 'none';
       toggleBtn.innerHTML = `
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M4 8l4-4 4 4H4z"/>
-        </svg>
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="18 15 12 9 6 15"/></svg>
       `;
       toggleBtn.title = 'Expand transcript';
       panel.style.maxHeight = 'auto';
@@ -182,9 +176,7 @@ const TranscriptUI = (function() {
         searchContainer.style.display = 'block';
       }
       toggleBtn.innerHTML = `
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-          <path d="M4 8l4 4 4-4H4z"/>
-        </svg>
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
       `;
       toggleBtn.title = 'Minimize transcript';
       panel.style.maxHeight = '';
@@ -197,17 +189,17 @@ const TranscriptUI = (function() {
   function populateLanguageSelector() {
     const languageSelect = document.getElementById('language-selector');
     const languageSelectorContainer = document.getElementById('language-selector-container');
-    
+
     if (!languageSelect || !languageSelectorContainer) return;
-    
+
     if (availableLanguages.length === 0) {
       languageSelectorContainer.style.display = 'none';
       return;
     }
-    
+
     // Clear existing options
     languageSelect.innerHTML = '';
-    
+
     // Add options
     availableLanguages.forEach((lang, index) => {
       const option = document.createElement('option');
@@ -218,7 +210,7 @@ const TranscriptUI = (function() {
       }
       languageSelect.appendChild(option);
     });
-    
+
     languageSelectorContainer.style.display = 'flex';
   }
 
@@ -252,7 +244,7 @@ const TranscriptUI = (function() {
       entry.addEventListener('click', () => {
         const startTime = parseFloat(entry.dataset.start);
         VideoSync.seekToTime(startTime);
-        
+
         // Mark as manual scrolling for shorter time on click
         VideoSync.handleUserScroll();
       });
@@ -274,7 +266,7 @@ const TranscriptUI = (function() {
       return;
     }
 
-    const filtered = transcriptData.filter(entry => 
+    const filtered = transcriptData.filter(entry =>
       entry.text.toLowerCase().includes(searchTerm)
     );
 
@@ -354,26 +346,24 @@ const TranscriptUI = (function() {
     if (!transcriptData || transcriptData.length === 0) {
       return;
     }
-    
+
     try {
       const text = transcriptData.map(entry => {
         const timestamp = TranscriptUtils.formatTime(entry.start);
         return `[${timestamp}] ${entry.text}`;
       }).join('\n\n');
-      
+
       await navigator.clipboard.writeText(text);
-      
+
       const copyBtn = document.getElementById('copy-transcript-btn');
       if (copyBtn) {
         const originalHTML = copyBtn.innerHTML;
         copyBtn.innerHTML = `
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-            <path d="M13.5 2l-7.5 7.5-3.5-3.5-1.5 1.5 5 5 9-9z"/>
-          </svg>
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
           Copied!
         `;
         copyBtn.disabled = true;
-        
+
         setTimeout(() => {
           copyBtn.innerHTML = originalHTML;
           copyBtn.disabled = false;
@@ -418,42 +408,37 @@ const TranscriptUI = (function() {
         panel.innerHTML = `
           <div class="transcript-header">
             <div class="transcript-header-top">
-              <h3>Video Transcript</h3>
+              <h3>
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                Video Transcript
+              </h3>
               <button id="minimize-panel-btn" class="minimize-panel-btn" title="Minimize transcript">
-                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                  <path d="M4 8l4 4 4-4H4z"/>
-                </svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
               </button>
             </div>
-            <button id="load-transcript-btn" class="load-transcript-btn">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M8 2a6 6 0 100 12A6 6 0 008 2zm0 1a5 5 0 110 10A5 5 0 018 3zm-.5 2.5v3h3v1h-4v-4h1z"/>
-              </svg>
+            <button id="load-transcript-btn" class="action-btn btn-primary">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
               Load Transcript
             </button>
-            <button id="refresh-transcript-btn" class="refresh-transcript-btn" style="display: none;" title="Refresh and reload transcript">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M13.65 2.35A8 8 0 1 0 16 8h-2a6 6 0 1 1-1.76-4.24L10 6h6V0l-2.35 2.35z"/>
-              </svg>
+            <button id="refresh-transcript-btn" class="action-btn btn-secondary" style="display: none;" title="Refresh and reload transcript">
+              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/></svg>
               Refresh Transcript
             </button>
             <div class="language-selector-container" id="language-selector-container" style="display: none;">
               <label for="language-selector" class="language-label">
-                <svg width="14" height="14" viewBox="0 0 16 16" fill="currentColor" style="margin-right: 6px;">
-                  <path d="M8 0a8 8 0 110 16A8 8 0 018 0zM4.5 7.5a.5.5 0 000 1h5.793l-2.147 2.146a.5.5 0 00.708.708l3-3a.5.5 0 000-.708l-3-3a.5.5 0 10-.708.708L10.293 7.5H4.5z"/>
-                </svg>
+                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right: 6px;"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
                 Language:
               </label>
               <select id="language-selector" class="language-selector"></select>
             </div>
             <div class="search-container" id="search-container" style="display: none;">
-              <input type="text" id="transcript-search" placeholder="Search transcript...">
+              <div class="search-input-wrapper">
+                <svg class="search-icon-overlay" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+                <input type="text" id="transcript-search" placeholder="Search transcript...">
+              </div>
               <div class="transcript-options">
-                <button id="copy-transcript-btn" class="copy-transcript-btn">
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                    <path d="M4 2h8a2 2 0 012 2v8a2 2 0 01-2 2H4a2 2 0 01-2-2V4a2 2 0 012-2zm0 1a1 1 0 00-1 1v8a1 1 0 001 1h8a1 1 0 001-1V4a1 1 0 00-1-1H4z"/>
-                    <path d="M11 7h3v7a2 2 0 01-2 2H5v-1h7a1 1 0 001-1V7z" opacity="0.6"/>
-                  </svg>
+                <button id="copy-transcript-btn" class="action-btn btn-secondary">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
                   Copy All
                 </button>
               </div>
@@ -508,7 +493,7 @@ const TranscriptUI = (function() {
     }
 
     if (refreshBtn) {
-      refreshBtn.style.display = 'block';
+      refreshBtn.style.display = 'flex';
     }
 
     if (searchContainer) {
