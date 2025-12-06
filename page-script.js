@@ -14,14 +14,40 @@
     const { eventId } = event.detail;
     
     try {
+      // Extract ytcfg configuration (contains API keys, client info, etc.)
+      const ytcfgData = typeof ytcfg !== 'undefined' && ytcfg.data_ ? {
+        INNERTUBE_API_KEY: ytcfg.data_.INNERTUBE_API_KEY,
+        INNERTUBE_CLIENT_NAME: ytcfg.data_.INNERTUBE_CLIENT_NAME,
+        INNERTUBE_CLIENT_VERSION: ytcfg.data_.INNERTUBE_CLIENT_VERSION,
+        INNERTUBE_CONTEXT_CLIENT_NAME: ytcfg.data_.INNERTUBE_CONTEXT_CLIENT_NAME,
+        VISITOR_DATA: ytcfg.data_.VISITOR_DATA,
+        HL: ytcfg.data_.HL,
+        GL: ytcfg.data_.GL,
+        LOGGED_IN: ytcfg.data_.LOGGED_IN
+      } : null;
+      
       const data = {
         ytInitialData: typeof ytInitialData !== 'undefined' ? ytInitialData : null,
-        ytInitialPlayerResponse: typeof ytInitialPlayerResponse !== 'undefined' ? ytInitialPlayerResponse : null
+        ytInitialPlayerResponse: typeof ytInitialPlayerResponse !== 'undefined' ? ytInitialPlayerResponse : null,
+        ytcfg: ytcfgData
       };
+      
+      // Debug: Check for caption tracks
+      const captions = data.ytInitialPlayerResponse?.captions;
+      const captionTracks = captions?.playerCaptionsTracklistRenderer?.captionTracks;
       
       console.log('Extracted data:', {
         hasYtInitialData: !!data.ytInitialData,
-        hasYtInitialPlayerResponse: !!data.ytInitialPlayerResponse
+        hasYtInitialPlayerResponse: !!data.ytInitialPlayerResponse,
+        hasYtcfg: !!data.ytcfg,
+        clientVersion: ytcfgData?.INNERTUBE_CLIENT_VERSION,
+        hasCaptions: !!captions,
+        captionTracksCount: captionTracks?.length || 0,
+        captionTracksInfo: captionTracks?.map(t => ({
+          lang: t.languageCode,
+          name: t.name?.simpleText,
+          hasBaseUrl: !!t.baseUrl
+        })) || []
       });
       
       window.dispatchEvent(new CustomEvent('dataExtractResponse', {
@@ -161,98 +187,171 @@
     console.log('📥 Page script received fetch request:', event.detail);
     const { url, eventId } = event.detail;
     
-    console.log('🌐 Making XHR request to:', url);
+    console.log('🌐 Making fetch request to:', url);
     console.log('🆔 Event ID:', eventId);
     
     try {
-      const xhr = new XMLHttpRequest();
-      xhr.open('GET', url, true);
+      // Use fetch with credentials to include cookies
+      const response = await fetch(url, {
+        method: 'GET',
+        credentials: 'include',
+        headers: {
+          'Accept': 'application/json, text/xml, text/plain, */*'
+        }
+      });
       
-      // Add necessary headers
-      xhr.setRequestHeader('Accept', 'application/json, text/plain, */*');
-      xhr.responseType = 'text';
+      console.log('✓ Fetch response received');
+      console.log('📊 Status:', response.status);
+      console.log('📊 Status text:', response.statusText);
+      console.log('📊 Content-Type:', response.headers.get('content-type'));
       
-      xhr.onload = function() {
-        console.log('✓ XHR onload triggered');
-        console.log('📊 Status:', xhr.status);
-        console.log('📊 Status text:', xhr.statusText);
-        console.log('📊 Ready state:', xhr.readyState);
-        console.log('📊 Response type:', xhr.responseType);
-        console.log('📊 Response text length:', xhr.responseText?.length || 0);
-        console.log('📊 First 500 chars:', xhr.responseText?.substring(0, 500));
-        console.log('📊 All response headers:', xhr.getAllResponseHeaders());
+      if (response.ok) {
+        const text = await response.text();
+        console.log('📊 Response text length:', text?.length || 0);
+        console.log('📊 First 500 chars:', text?.substring(0, 500));
         
-        if (xhr.status === 200) {
-          if (!xhr.responseText || xhr.responseText.length === 0) {
-            console.error('❌ Status 200 but empty response!');
-            console.error('⚠️ This usually means the URL is expired or YouTube blocked the request');
-            window.dispatchEvent(new CustomEvent('transcriptFetchResponse', {
-              detail: {
-                eventId,
-                success: false,
-                error: 'Empty response - URL may be expired or request blocked'
-              }
-            }));
-            return;
-          }
-          
-          window.dispatchEvent(new CustomEvent('transcriptFetchResponse', {
-            detail: {
-              eventId,
-              success: true,
-              data: xhr.responseText
-            }
-          }));
-        } else {
-          console.error('❌ Non-200 status:', xhr.status);
+        if (!text || text.length === 0) {
+          console.error('❌ Status 200 but empty response!');
+          console.error('⚠️ This usually means the URL is expired or YouTube blocked the request');
           window.dispatchEvent(new CustomEvent('transcriptFetchResponse', {
             detail: {
               eventId,
               success: false,
-              error: `HTTP ${xhr.status}: ${xhr.statusText}`
+              error: 'Empty response - URL may be expired or request blocked'
             }
           }));
+          return;
         }
-      };
-      
-      xhr.onerror = function() {
-        console.error('❌ XHR onerror triggered');
-        console.error('Status:', xhr.status);
-        console.error('Ready state:', xhr.readyState);
+        
+        window.dispatchEvent(new CustomEvent('transcriptFetchResponse', {
+          detail: {
+            eventId,
+            success: true,
+            data: text
+          }
+        }));
+      } else {
+        console.error('❌ Non-200 status:', response.status);
+        const errorText = await response.text().catch(() => '');
         window.dispatchEvent(new CustomEvent('transcriptFetchResponse', {
           detail: {
             eventId,
             success: false,
-            error: 'Network error'
+            error: `HTTP ${response.status}: ${response.statusText}`,
+            errorDetails: errorText.substring(0, 500)
           }
         }));
-      };
-      
-      xhr.ontimeout = function() {
-        console.error('⏱️ XHR timeout');
-        window.dispatchEvent(new CustomEvent('transcriptFetchResponse', {
-          detail: {
-            eventId,
-            success: false,
-            error: 'Request timeout'
-          }
-        }));
-      };
-      
-      xhr.onprogress = function(event) {
-        if (event.lengthComputable) {
-          console.log(`📥 Progress: ${event.loaded} / ${event.total} bytes`);
-        } else {
-          console.log(`📥 Progress: ${event.loaded} bytes`);
-        }
-      };
-      
-      console.log('📤 Sending XHR request...');
-      xhr.send();
+      }
     } catch (error) {
       console.error('❌ Exception in page script fetch:', error);
       console.error('Stack:', error.stack);
       window.dispatchEvent(new CustomEvent('transcriptFetchResponse', {
+        detail: {
+          eventId,
+          success: false,
+          error: error.message
+        }
+      }));
+    }
+  });
+  
+  // Listen for transcript API requests (handles the youtubei API call)
+  window.addEventListener('transcriptApiRequest', async (event) => {
+    console.log('📥 Page script received transcript API request');
+    const { eventId, params, videoId } = event.detail;
+    
+    try {
+      // Get client config from ytcfg
+      const ytcfgData = typeof ytcfg !== 'undefined' && ytcfg.data_ ? ytcfg.data_ : {};
+      const innertubeApiKey = ytcfgData.INNERTUBE_API_KEY || '';
+      const innertubeClientVersion = ytcfgData.INNERTUBE_CLIENT_VERSION || '2.20251201.00.00';
+      const visitorData = ytcfgData.VISITOR_DATA || '';
+      const hl = (ytcfgData.HL || navigator.language || 'en').split('-')[0];
+      const gl = ytcfgData.GL || 'US';
+      
+      // Extract video ID from URL if not provided
+      const currentVideoId = videoId || new URLSearchParams(window.location.search).get('v') || '';
+      
+      console.log('📤 Making transcript API request with:', {
+        hl,
+        gl,
+        clientVersion: innertubeClientVersion,
+        hasApiKey: !!innertubeApiKey,
+        hasVisitorData: !!visitorData,
+        videoId: currentVideoId
+      });
+      
+      const body = {
+        context: {
+          client: {
+            hl: hl,
+            gl: gl,
+            visitorData: visitorData,
+            userAgent: navigator.userAgent,
+            clientName: ytcfgData.INNERTUBE_CLIENT_NAME || 'WEB',
+            clientVersion: innertubeClientVersion,
+            platform: "DESKTOP",
+            osName: "Windows",
+            osVersion: "10.0",
+            originalUrl: window.location.href,
+            browserName: "Chrome",
+            browserVersion: navigator.userAgent.match(/Chrome\/(\d+)/)?.[1] || "120"
+          },
+          request: { 
+            useSsl: true,
+            internalExperimentFlags: [],
+            consistencyTokenJars: []
+          }
+        },
+        videoId: currentVideoId,
+        params: params
+      };
+      
+      // Build URL with API key
+      let apiUrl = "https://www.youtube.com/youtubei/v1/get_transcript?prettyPrint=false";
+      if (innertubeApiKey) {
+        apiUrl += `&key=${innertubeApiKey}`;
+      }
+      
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: { 
+          "Content-Type": "application/json",
+          "X-YouTube-Client-Name": String(ytcfgData.INNERTUBE_CONTEXT_CLIENT_NAME || 1),
+          "X-YouTube-Client-Version": innertubeClientVersion
+        },
+        body: JSON.stringify(body),
+        credentials: 'include'
+      });
+      
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'No error text');
+        console.error('❌ Transcript API Error:', response.status, errorText.substring(0, 500));
+        window.dispatchEvent(new CustomEvent('transcriptApiResponse', {
+          detail: {
+            eventId,
+            success: false,
+            error: `API request failed: ${response.status}`,
+            errorDetails: errorText.substring(0, 500)
+          }
+        }));
+        return;
+      }
+      
+      const json = await response.json();
+      console.log('✓ Transcript API response received');
+      
+      window.dispatchEvent(new CustomEvent('transcriptApiResponse', {
+        detail: {
+          eventId,
+          success: true,
+          data: json
+        }
+      }));
+      
+    } catch (error) {
+      console.error('❌ Exception in transcript API request:', error);
+      window.dispatchEvent(new CustomEvent('transcriptApiResponse', {
         detail: {
           eventId,
           success: false,

@@ -10,6 +10,127 @@ const TranscriptExtraction = (function() {
   let lastTranscriptParams = null; // Track last params used
 
   /**
+   * Extract transcript directly from YouTube's native transcript panel DOM
+   * This is a fallback method when API methods fail
+   * @returns {Promise<Array|null>} Transcript data or null
+   */
+  async function extractTranscriptFromDOM() {
+    try {
+      console.log('🔍 Trying to extract transcript from YouTube DOM...');
+      
+      // Check if transcript panel is already open
+      let transcriptPanel = document.querySelector('ytd-transcript-renderer[panel-content-visible]');
+      let panelWasOpened = false;
+      
+      if (!transcriptPanel) {
+        console.log('📋 Transcript panel not visible, trying to open it...');
+        
+        // Try to find and click the "Show transcript" button
+        const showTranscriptBtn = document.querySelector(
+          'ytd-video-description-transcript-section-renderer button, ' +
+          'button[aria-label*="transcript" i], ' +
+          'button[aria-label*="transcripción" i], ' +
+          'button[aria-label*="Mostrar transcripción" i]'
+        );
+        
+        if (showTranscriptBtn) {
+          console.log('🖱️ Clicking "Show transcript" button...');
+          showTranscriptBtn.click();
+          panelWasOpened = true;
+          
+          // Wait for the panel to appear
+          await new Promise(resolve => setTimeout(resolve, 1500));
+          
+          transcriptPanel = document.querySelector('ytd-transcript-renderer[panel-content-visible]');
+        }
+      }
+      
+      if (!transcriptPanel) {
+        console.log('❌ Could not find or open transcript panel');
+        return null;
+      }
+      
+      console.log('✓ Transcript panel found, extracting segments...');
+      
+      // Extract transcript segments from the DOM
+      const segments = transcriptPanel.querySelectorAll('ytd-transcript-segment-renderer');
+      
+      if (!segments || segments.length === 0) {
+        console.log('❌ No transcript segments found in panel');
+        return null;
+      }
+      
+      console.log(`📝 Found ${segments.length} transcript segments`);
+      
+      const transcriptData = [];
+      
+      for (const segment of segments) {
+        // Get timestamp
+        const timestampEl = segment.querySelector('.segment-timestamp');
+        const textEl = segment.querySelector('.segment-text');
+        
+        if (timestampEl && textEl) {
+          const timestampText = timestampEl.textContent.trim();
+          const text = textEl.textContent.trim();
+          
+          // Parse timestamp (formats: "0:00", "1:23", "1:23:45")
+          const timeParts = timestampText.split(':').map(p => parseInt(p, 10));
+          let startSeconds = 0;
+          
+          if (timeParts.length === 2) {
+            // MM:SS
+            startSeconds = timeParts[0] * 60 + timeParts[1];
+          } else if (timeParts.length === 3) {
+            // HH:MM:SS
+            startSeconds = timeParts[0] * 3600 + timeParts[1] * 60 + timeParts[2];
+          }
+          
+          transcriptData.push({
+            start: startSeconds,
+            duration: 0, // Duration not available from DOM
+            text: text
+          });
+        }
+      }
+      
+      if (transcriptData.length > 0) {
+        console.log(`✓ Extracted ${transcriptData.length} transcript entries from DOM`);
+        
+        // Calculate approximate durations based on next segment start times
+        for (let i = 0; i < transcriptData.length - 1; i++) {
+          transcriptData[i].duration = transcriptData[i + 1].start - transcriptData[i].start;
+        }
+        // Last segment gets a default duration
+        if (transcriptData.length > 0) {
+          transcriptData[transcriptData.length - 1].duration = 3;
+        }
+        
+        // Close the native transcript panel if we opened it
+        if (panelWasOpened) {
+          console.log('🔒 Closing native transcript panel...');
+          const closeBtn = document.querySelector(
+            'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"] button[aria-label*="Cerrar" i], ' +
+            'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"] button[aria-label*="Close" i], ' +
+            'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"] #visibility-button button'
+          );
+          
+          if (closeBtn) {
+            closeBtn.click();
+            console.log('✓ Native panel closed');
+          }
+        }
+        
+        return transcriptData;
+      }
+      
+      return null;
+    } catch (error) {
+      console.error('❌ Error extracting transcript from DOM:', error);
+      return null;
+    }
+  }
+
+  /**
    * Inject page script handler for bypassing CORS
    */
   function injectFetchHandler() {
@@ -89,6 +210,63 @@ const TranscriptExtraction = (function() {
         window.removeEventListener('dataExtractResponse', responseHandler);
         resolve({ ytInitialData: null, ytInitialPlayerResponse: null });
       }, 2000);
+    });
+  }
+
+  /**
+   * Fetch transcript via page context to bypass CORS
+   * Uses the youtubei/v1/get_transcript endpoint
+   * @param {string} params - Transcript params from engagement panel
+   * @param {string} videoId - Video ID for the transcript request
+   * @returns {Promise<Object>} Promise with transcript API response
+   */
+  function fetchTranscriptViaPageContext(params, videoId = null) {
+    return new Promise((resolve, reject) => {
+      const eventId = 'transcriptApi_' + Date.now() + '_' + Math.random();
+      let timeoutId = null;
+      let isResolved = false;
+      
+      // Get current video ID if not provided
+      const currentVideoId = videoId || TranscriptUtils.getVideoId();
+      
+      const responseHandler = (event) => {
+        if (event.detail && event.detail.eventId === eventId) {
+          if (isResolved) return; // Prevent double resolution
+          isResolved = true;
+          
+          window.removeEventListener('transcriptApiResponse', responseHandler);
+          
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+            timeoutId = null;
+          }
+          
+          if (event.detail.success) {
+            resolve(event.detail.data);
+          } else {
+            console.error('❌ Transcript API failed:', event.detail.error);
+            if (event.detail.errorDetails) {
+              console.error('❌ Error details:', event.detail.errorDetails);
+            }
+            reject(new Error(event.detail.error || 'Transcript API failed'));
+          }
+        }
+      };
+      
+      window.addEventListener('transcriptApiResponse', responseHandler);
+      
+      window.dispatchEvent(new CustomEvent('transcriptApiRequest', {
+        detail: { params, eventId, videoId: currentVideoId }
+      }));
+      
+      timeoutId = setTimeout(() => {
+        if (isResolved) return; // Already resolved
+        isResolved = true;
+        
+        window.removeEventListener('transcriptApiResponse', responseHandler);
+        console.error('⏱️ Transcript API timeout after 15 seconds');
+        reject(new Error('Transcript API timeout'));
+      }, 15000);
     });
   }
 
@@ -173,6 +351,118 @@ const TranscriptExtraction = (function() {
     throw new Error(`${key} not found`);
   }
 
+  // Transcript panel title variations in different languages
+  const TRANSCRIPT_TITLE_VARIANTS = [
+    'transcript', 'transcripción', 'transcrição', 'transkript', 
+    'transcription', 'trascrizione', '트랜스크립트', '字幕', 'ondertiteling'
+  ];
+
+  /**
+   * Find transcript panel in engagement panels array
+   * Uses multiple detection methods for robustness
+   * @param {Array} panels - Array of engagement panels
+   * @returns {Object|null} Transcript panel or null
+   */
+  function findTranscriptPanel(panels) {
+    if (!panels || !Array.isArray(panels)) return null;
+    
+    return panels.find(p => {
+      const renderer = p.engagementPanelSectionListRenderer;
+      if (!renderer) return false;
+      
+      // Method 1: Check for getTranscriptEndpoint (most reliable)
+      const hasEndpoint = renderer.content?.continuationItemRenderer?.continuationEndpoint?.getTranscriptEndpoint;
+      if (hasEndpoint) return true;
+      
+      // Method 2: Check title text in various languages
+      const title = renderer.header?.engagementPanelTitleHeaderRenderer?.title?.simpleText?.toLowerCase() || '';
+      if (TRANSCRIPT_TITLE_VARIANTS.some(variant => title.includes(variant))) return true;
+      
+      // Method 3: Check for transcript in panel identifier
+      const panelId = renderer.panelIdentifier?.toLowerCase() || '';
+      if (panelId.includes('transcript')) return true;
+      
+      // Method 4: Check targetId for engagement-panel-transcript
+      const targetId = renderer.targetId?.toLowerCase() || '';
+      if (targetId.includes('transcript')) return true;
+      
+      return false;
+    });
+  }
+
+  /**
+   * Fetch transcript directly from caption track URL (most reliable method)
+   * @param {string} baseUrl - Caption track base URL
+   * @param {string} videoId - Video ID for logging
+   * @returns {Promise<Array>} Promise with transcript data
+   */
+  async function fetchTranscriptFromCaptionUrl(baseUrl, videoId) {
+    try {
+      console.log('📥 Fetching transcript from caption URL...');
+      console.log('📥 Full Base URL:', baseUrl);
+      
+      // Ensure the URL is valid
+      if (!baseUrl || !baseUrl.startsWith('http')) {
+        throw new Error('Invalid caption URL');
+      }
+      
+      // Add json3 format for easier parsing
+      const url = new URL(baseUrl);
+      url.searchParams.set('fmt', 'json3');
+      
+      const finalUrl = url.toString();
+      console.log('📥 Final URL with fmt=json3:', finalUrl);
+      console.log('📥 Requesting via page context (bypasses CORS)...');
+      
+      // Use fetchViaPageContext to bypass CORS restrictions
+      const text = await fetchViaPageContext(finalUrl);
+      
+      console.log('📥 Response length:', text.length, 'chars');
+      console.log('📥 Response preview:', text.substring(0, 200));
+      
+      // Try parsing as JSON first
+      try {
+        const data = JSON.parse(text);
+        
+        if (data.events) {
+          const transcriptData = data.events
+            .filter(e => e.segs)
+            .map(e => ({
+              start: (e.tStartMs || 0) / 1000,
+              duration: (e.dDurationMs || 0) / 1000,
+              text: e.segs.map(seg => seg.utf8 || '').join(' ').replace(/\n/g, ' ').trim()
+            }))
+            .filter(item => item.text !== '');
+          
+          console.log(`✓ Extracted ${transcriptData.length} transcript entries from JSON`);
+          return transcriptData;
+        }
+      } catch (jsonError) {
+        console.log('📥 Not JSON, trying XML...');
+      }
+      
+      // Try parsing as XML
+      if (text.includes('<transcript>') || text.includes('<text')) {
+        const matches = [...text.matchAll(/<text start="([^"]*)" dur="([^"]*)">([^<]*)<\/text>/g)];
+        if (matches.length > 0) {
+          const transcriptData = matches.map(match => ({
+            start: parseFloat(match[1]),
+            duration: parseFloat(match[2]),
+            text: TranscriptUtils.decodeHTMLEntities(match[3])
+          }));
+          
+          console.log(`✓ Extracted ${transcriptData.length} transcript entries from XML`);
+          return transcriptData;
+        }
+      }
+      
+      throw new Error('Could not parse caption response as JSON or XML');
+    } catch (error) {
+      console.error('❌ Error fetching caption URL:', error);
+      throw error;
+    }
+  }
+
   /**
    * Get transcript from YouTube's engagement panel API
    * @param {Object} ytData - YouTube initial data
@@ -183,23 +473,14 @@ const TranscriptExtraction = (function() {
     try {
       const panels = ytData?.engagementPanels || [];
       
-      // Find transcript panel
-      const transcriptPanel = panels.find(p => {
-        const renderer = p.engagementPanelSectionListRenderer;
-        if (!renderer) return false;
-        
-        const hasEndpoint = renderer.content?.continuationItemRenderer?.continuationEndpoint?.getTranscriptEndpoint;
-        const title = renderer.header?.engagementPanelTitleHeaderRenderer?.title?.simpleText?.toLowerCase();
-        const hasTitle = title && title.includes('transcript');
-        
-        return hasEndpoint || hasTitle;
-      });
+      // Use centralized panel finder
+      const transcriptPanel = findTranscriptPanel(panels);
       
       if (!transcriptPanel) {
         throw new Error("Could not find transcript panel");
       }
       
-      console.log('🔧 CODE VERSION: 2024-10-04-STALE-PARAMS-FIX');
+      console.log('🔧 CODE VERSION: 2024-12-05-CAPTION-PAGECONTEXT-V6');
       
       // Try to extract available languages from player response
       const playerResponse = ytData?.ytInitialPlayerResponse || window.ytInitialPlayerResponse;
@@ -208,15 +489,6 @@ const TranscriptExtraction = (function() {
       if (captionTracks.length > 0) {
         console.log(`🌐 Found ${captionTracks.length} available languages`);
       }
-      
-      // Detect user's language preference from YouTube or browser
-      const userLanguage = ytData.topbar?.desktopTopbarRenderer?.searchbox?.fusionSearchboxRenderer?.config?.webSearchboxConfig?.requestLanguage 
-        || document.documentElement.lang 
-        || navigator.language?.split('-')[0] 
-        || "en";
-      const hl = userLanguage;
-      const clientData = ytData.responseContext?.serviceTrackingParams?.[0]?.params;
-      const visitorData = ytData.responseContext?.webResponseContextExtensionData?.ytConfigData?.visitorData;
       
       const initialParams = transcriptPanel.engagementPanelSectionListRenderer?.content?.continuationItemRenderer?.continuationEndpoint?.getTranscriptEndpoint?.params;
       
@@ -243,34 +515,12 @@ const TranscriptExtraction = (function() {
       lastVideoId = currentVideoId;
       lastTranscriptParams = initialParams;
       
-      const body = {
-        context: {
-          client: {
-            hl: hl,
-            visitorData: visitorData,
-            clientName: clientData?.[0]?.value || "WEB",
-            clientVersion: clientData?.[1]?.value || "2.20231219.01.00"
-          },
-          request: { useSsl: true }
-        },
-        params: initialParams
-      };
+      console.log('📤 Making transcript API request via page context...');
+      console.log('📤 Video ID:', currentVideoId);
       
-      const res = await fetch("https://www.youtube.com/youtubei/v1/get_transcript?prettyPrint=false", {
-        method: "POST",
-        headers: { 
-          "Content-Type": "application/json",
-          "X-YouTube-Client-Name": "1",
-          "X-YouTube-Client-Version": body.context.client.clientVersion
-        },
-        body: JSON.stringify(body)
-      });
+      // Use page script to make the API call (avoids CORS issues)
+      const json = await fetchTranscriptViaPageContext(initialParams, currentVideoId);
       
-      if (!res.ok) {
-        throw new Error(`API request failed: ${res.status} ${res.statusText}`);
-      }
-      
-      const json = await res.json();
       console.log('📥 API response received');
       console.log('✓ Transcript data received successfully');
       
@@ -386,11 +636,11 @@ const TranscriptExtraction = (function() {
     
     if (ytData) {
       const panels = ytData?.engagementPanels || [];
-      const hasTranscriptPanel = panels.some(p =>
-        p.engagementPanelSectionRenderer?.content?.continuationItemRenderer?.continuationEndpoint?.getTranscriptEndpoint
-      );
       
-      if (hasTranscriptPanel) {
+      // Use centralized panel finder
+      const transcriptPanel = findTranscriptPanel(panels);
+      
+      if (transcriptPanel) {
         console.log('✓ Found transcript panel in ytInitialData');
         return await getTranscriptFromPanel(ytData, languageCode);
       }
@@ -523,21 +773,70 @@ const TranscriptExtraction = (function() {
 
       const pageData = await extractDataFromPageContext();
       
-      // PRIORITY 1: Try transcript panel method first (MOST RELIABLE)
+      console.log('📊 Page data extracted:', {
+        hasYtInitialData: !!pageData.ytInitialData,
+        hasYtInitialPlayerResponse: !!pageData.ytInitialPlayerResponse,
+        hasYtcfg: !!pageData.ytcfg
+      });
+      
+      // PRIORITY 0: Try caption tracks directly (MOST RELIABLE - bypasses get_transcript API issues)
+      const playerResponse = pageData.ytInitialPlayerResponse || window.ytInitialPlayerResponse;
+      const captionTracks = playerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks;
+      
+      console.log('📊 Caption info:', {
+        hasPlayerResponse: !!playerResponse,
+        hasCaptions: !!playerResponse?.captions,
+        hasPlayerCaptionsTracklistRenderer: !!playerResponse?.captions?.playerCaptionsTracklistRenderer,
+        captionTracksCount: captionTracks?.length || 0
+      });
+      
+      if (captionTracks && captionTracks.length > 0) {
+        console.log(`🎯 Found ${captionTracks.length} caption tracks - trying direct fetch...`);
+        
+        // Log all available tracks for debugging
+        captionTracks.forEach((track, i) => {
+          console.log(`  Track ${i}: ${track.name?.simpleText || track.languageCode} - hasBaseUrl: ${!!track.baseUrl}`);
+          if (track.baseUrl) {
+            console.log(`    URL preview: ${track.baseUrl.substring(0, 80)}...`);
+          }
+        });
+        
+        // Find the best matching track
+        let selectedTrack = null;
+        
+        if (targetLanguage) {
+          // Try exact match first
+          selectedTrack = captionTracks.find(t => t.languageCode === targetLanguage);
+          // Try partial match (e.g., 'es' matches 'es-419')
+          if (!selectedTrack) {
+            selectedTrack = captionTracks.find(t => t.languageCode?.startsWith(targetLanguage));
+          }
+        }
+        
+        // Default to first track (usually original language)
+        if (!selectedTrack) {
+          selectedTrack = captionTracks[0];
+        }
+        
+        if (selectedTrack?.baseUrl) {
+          try {
+            console.log(`📡 Selected track: ${selectedTrack.name?.simpleText || selectedTrack.languageCode}`);
+            const transcriptData = await fetchTranscriptFromCaptionUrl(selectedTrack.baseUrl, videoId);
+            if (transcriptData && transcriptData.length > 0) {
+              return transcriptData;
+            }
+          } catch (captionError) {
+            console.warn('⚠️ Direct caption fetch failed, trying panel method:', captionError.message);
+          }
+        }
+      }
+      
+      // PRIORITY 1: Try transcript panel method (fallback)
       if (pageData.ytInitialData) {
         const panels = pageData.ytInitialData?.engagementPanels || [];
         
-        // Find transcript panel with multiple criteria
-        const transcriptPanel = panels.find(p => {
-          const renderer = p.engagementPanelSectionListRenderer;
-          if (!renderer) return false;
-          
-          const hasEndpoint = renderer.content?.continuationItemRenderer?.continuationEndpoint?.getTranscriptEndpoint;
-          const title = renderer.header?.engagementPanelTitleHeaderRenderer?.title?.simpleText?.toLowerCase();
-          const hasTitle = title && title.includes('transcript');
-          
-          return hasEndpoint || hasTitle;
-        });
+        // Use centralized panel finder
+        const transcriptPanel = findTranscriptPanel(panels);
         
         if (transcriptPanel) {
           try {
@@ -567,16 +866,8 @@ const TranscriptExtraction = (function() {
         if (retryPageData.ytInitialData) {
           const panels = retryPageData.ytInitialData?.engagementPanels || [];
           
-          const transcriptPanel = panels.find(p => {
-            const renderer = p.engagementPanelSectionListRenderer;
-            if (!renderer) return false;
-            
-            const hasEndpoint = renderer.content?.continuationItemRenderer?.continuationEndpoint?.getTranscriptEndpoint;
-            const title = renderer.header?.engagementPanelTitleHeaderRenderer?.title?.simpleText?.toLowerCase();
-            const hasTitle = title && title.includes('transcript');
-            
-            return hasEndpoint || hasTitle;
-          });
+          // Use centralized panel finder
+          const transcriptPanel = findTranscriptPanel(panels);
           
           if (transcriptPanel) {
             try {
@@ -599,11 +890,42 @@ const TranscriptExtraction = (function() {
         return captionsFromPlayer;
       }
       
-      // PRIORITY 3: Last resort - fetch page HTML and try panel method
-      console.log('⚠️ Last resort: Fetching page HTML...');
+      // PRIORITY 3: Last resort - fetch page HTML and try all methods again
+      console.log('⚠️ Last resort: Fetching fresh page HTML...');
       try {
         const response = await fetch(window.location.href);
         const html = await response.text();
+        
+        // First, try to get caption tracks from fresh ytInitialPlayerResponse
+        let playerData = extractJsonFromHtml(html, "ytInitialPlayerResponse");
+        
+        if (playerData?.captions?.playerCaptionsTracklistRenderer?.captionTracks) {
+          const freshTracks = playerData.captions.playerCaptionsTracklistRenderer.captionTracks;
+          console.log(`✓ Found ${freshTracks.length} caption tracks in fresh HTML`);
+          
+          let selectedTrack = null;
+          if (targetLanguage) {
+            selectedTrack = freshTracks.find(t => t.languageCode === targetLanguage);
+            if (!selectedTrack) {
+              selectedTrack = freshTracks.find(t => t.languageCode?.startsWith(targetLanguage));
+            }
+          }
+          if (!selectedTrack) {
+            selectedTrack = freshTracks[0];
+          }
+          
+          if (selectedTrack?.baseUrl) {
+            try {
+              console.log(`📡 Trying fresh track: ${selectedTrack.name?.simpleText || selectedTrack.languageCode}`);
+              const transcriptData = await fetchTranscriptFromCaptionUrl(selectedTrack.baseUrl, videoId);
+              if (transcriptData && transcriptData.length > 0) {
+                return transcriptData;
+              }
+            } catch (freshCaptionError) {
+              console.warn('⚠️ Fresh caption fetch also failed:', freshCaptionError.message);
+            }
+          }
+        }
         
         // Try to extract ytInitialData from HTML
         let ytData = extractJsonFromHtml(html, "ytInitialData");
@@ -611,13 +933,10 @@ const TranscriptExtraction = (function() {
         if (ytData) {
           const panels = ytData?.engagementPanels || [];
           
-          const hasTranscriptPanel = panels.some(p => {
-            const renderer = p.engagementPanelSectionListRenderer;
-            return renderer?.content?.continuationItemRenderer?.continuationEndpoint?.getTranscriptEndpoint ||
-                   renderer?.header?.engagementPanelTitleHeaderRenderer?.title?.simpleText?.toLowerCase().includes('transcript');
-          });
+          // Use centralized panel finder
+          const transcriptPanel = findTranscriptPanel(panels);
           
-          if (hasTranscriptPanel) {
+          if (transcriptPanel) {
             console.log('✓ Found transcript panel in fetched HTML');
             const transcriptData = await getTranscriptFromPanel(ytData, targetLanguage);
             if (transcriptData && transcriptData.length > 0) {
@@ -627,6 +946,13 @@ const TranscriptExtraction = (function() {
         }
       } catch (error) {
         console.error('Failed to fetch page HTML:', error);
+      }
+      
+      // PRIORITY 4: Extract from YouTube's native transcript panel DOM
+      console.log('⚠️ Trying DOM extraction as final fallback...');
+      const domTranscript = await extractTranscriptFromDOM();
+      if (domTranscript && domTranscript.length > 0) {
+        return domTranscript;
       }
       
       // If all methods fail, throw error

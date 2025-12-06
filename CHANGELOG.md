@@ -1,5 +1,83 @@
 # Changelog - YouTube Transcript Search Extension
 
+## 📅 Sesión del 5 de Diciembre, 2025
+
+### 🎯 Resumen Ejecutivo
+
+Se realizó una **revisión de compatibilidad con YouTube** y se corrigieron **bugs críticos** en la detección del panel de transcripción.
+
+---
+
+## 🔧 1. Corrección de Selector Incorrecto
+
+### Problema Identificado:
+- **Archivo**: `extraction.js`, función `extractTranscriptFromHtml()`
+- **Bug**: El código usaba `engagementPanelSectionRenderer` en lugar de `engagementPanelSectionListRenderer`
+- **Impacto**: La función nunca encontraba el panel de transcripción cuando se extraía desde HTML
+
+### Solución:
+- Corregido el selector para usar `engagementPanelSectionListRenderer` consistentemente
+
+---
+
+## 🔧 2. Centralización de Búsqueda de Panel de Transcripción
+
+### Problema:
+- Código duplicado en 5+ lugares para buscar el panel de transcripción
+- Inconsistencia en los métodos de detección
+- Difícil mantenimiento
+
+### Solución:
+- Nueva función helper `findTranscriptPanel(panels)` centralizada
+- Métodos de detección múltiples para mayor robustez:
+  1. **getTranscriptEndpoint** - El más confiable
+  2. **Título del panel** - Soporta múltiples idiomas
+  3. **panelIdentifier** - Identificador del panel
+  4. **targetId** - ID objetivo del panel
+
+---
+
+## 🌐 3. Soporte Multi-idioma para Títulos de Panel
+
+### Mejora:
+Se agregó soporte para detectar el panel de transcripción en diferentes idiomas de YouTube:
+
+```javascript
+const TRANSCRIPT_TITLE_VARIANTS = [
+  'transcript',      // English
+  'transcripción',   // Spanish
+  'transcrição',     // Portuguese
+  'transkript',      // German
+  'transcription',   // French
+  'trascrizione',    // Italian
+  '트랜스크립트',     // Korean
+  '字幕',            // Chinese/Japanese
+  'ondertiteling'    // Dutch
+];
+```
+
+### Beneficio:
+- La extensión ahora funciona correctamente con interfaces de YouTube en otros idiomas
+- Mayor compatibilidad global
+
+---
+
+## 📝 4. Actualización de Versión de Código
+
+- Actualizada la versión del código de `2024-10-04-STALE-PARAMS-FIX` a `2024-12-05-YOUTUBE-STRUCTURE-FIX`
+- Permite identificar qué versión está ejecutándose en los logs
+
+---
+
+## 🧪 Recomendaciones de Testing
+
+1. Probar en videos con diferentes idiomas de subtítulos
+2. Probar con interfaz de YouTube en español, inglés y otros idiomas
+3. Probar navegación entre videos
+4. Verificar que no hay errores en la consola
+
+---
+
 ## 📅 Sesión del 4 de Octubre, 2025
 
 ### 🎯 Resumen Ejecutivo
