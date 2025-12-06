@@ -230,7 +230,7 @@
           }
         }));
       } else {
-        console.error('❌ Non-200 status:', response.status);
+        // Don't log as error - this is part of the fallback chain
         const errorText = await response.text().catch(() => '');
         window.dispatchEvent(new CustomEvent('transcriptFetchResponse', {
           detail: {
@@ -242,8 +242,7 @@
         }));
       }
     } catch (error) {
-      console.error('❌ Exception in page script fetch:', error);
-      console.error('Stack:', error.stack);
+      // Don't log as error - this is part of the fallback chain
       window.dispatchEvent(new CustomEvent('transcriptFetchResponse', {
         detail: {
           eventId,
@@ -325,7 +324,7 @@
       
       if (!response.ok) {
         const errorText = await response.text().catch(() => 'No error text');
-        console.error('❌ Transcript API Error:', response.status, errorText.substring(0, 500));
+        // Don't log as error - this is part of the fallback chain
         window.dispatchEvent(new CustomEvent('transcriptApiResponse', {
           detail: {
             eventId,
@@ -349,7 +348,7 @@
       }));
       
     } catch (error) {
-      console.error('❌ Exception in transcript API request:', error);
+      // Don't log as error - this is part of the fallback chain
       window.dispatchEvent(new CustomEvent('transcriptApiResponse', {
         detail: {
           eventId,

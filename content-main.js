@@ -58,7 +58,12 @@
       console.log('✓ Transcript loaded successfully');
       
     } catch (error) {
-      console.error('❌ Failed to load transcript:', error);
+      // Only log as error for unexpected failures, not for expected cases like disabled transcripts
+      if (error.name === 'TranscriptsDisabled' || error.name === 'VideoUnavailable') {
+        console.log('ℹ️ Transcript not available:', error.message);
+      } else {
+        console.error('❌ Failed to load transcript:', error);
+      }
       
       let errorMessage = 'Failed to load transcript';
       if (error.name === 'TranscriptsDisabled') {

@@ -46,7 +46,7 @@ const TranscriptExtraction = (function() {
       }
       
       if (!transcriptPanel) {
-        console.log('❌ Could not find or open transcript panel');
+        console.log('ℹ️ Could not find or open transcript panel');
         return null;
       }
       
@@ -56,7 +56,7 @@ const TranscriptExtraction = (function() {
       const segments = transcriptPanel.querySelectorAll('ytd-transcript-segment-renderer');
       
       if (!segments || segments.length === 0) {
-        console.log('❌ No transcript segments found in panel');
+        console.log('ℹ️ No transcript segments found in panel');
         return null;
       }
       
@@ -125,7 +125,7 @@ const TranscriptExtraction = (function() {
       
       return null;
     } catch (error) {
-      console.error('❌ Error extracting transcript from DOM:', error);
+      console.log('ℹ️ Error extracting transcript from DOM, will show error to user');
       return null;
     }
   }
@@ -244,10 +244,7 @@ const TranscriptExtraction = (function() {
           if (event.detail.success) {
             resolve(event.detail.data);
           } else {
-            console.error('❌ Transcript API failed:', event.detail.error);
-            if (event.detail.errorDetails) {
-              console.error('❌ Error details:', event.detail.errorDetails);
-            }
+            // Don't log as error since this is an expected fallback path
             reject(new Error(event.detail.error || 'Transcript API failed'));
           }
         }
@@ -295,13 +292,11 @@ const TranscriptExtraction = (function() {
           
           if (event.detail.success) {
             if (!event.detail.data || event.detail.data.length === 0) {
-              console.error('❌ Success but empty data received');
               reject(new Error('Empty response from API'));
             } else {
               resolve(event.detail.data);
             }
           } else {
-            console.error('❌ Fetch failed:', event.detail.error);
             reject(new Error(event.detail.error || 'Fetch failed'));
           }
         }
@@ -458,7 +453,7 @@ const TranscriptExtraction = (function() {
       
       throw new Error('Could not parse caption response as JSON or XML');
     } catch (error) {
-      console.error('❌ Error fetching caption URL:', error);
+      // Don't log as error - this is part of the fallback chain
       throw error;
     }
   }
@@ -620,7 +615,7 @@ const TranscriptExtraction = (function() {
       return transcriptData;
       
     } catch (error) {
-      console.error('❌ Error in getTranscriptFromPanel:', error);
+      // Don't log as error - this is part of the fallback chain
       throw error;
     }
   }
@@ -945,7 +940,7 @@ const TranscriptExtraction = (function() {
           }
         }
       } catch (error) {
-        console.error('Failed to fetch page HTML:', error);
+        console.log('ℹ️ Fresh HTML fetch failed, trying DOM method...');
       }
       
       // PRIORITY 4: Extract from YouTube's native transcript panel DOM
@@ -987,11 +982,13 @@ const TranscriptExtraction = (function() {
       }
       
       // If we got here, something went wrong
-      console.error('❌ getTranscriptUrl did not return array data');
       throw new Error('Failed to get transcript data');
       
     } catch (error) {
-      console.error('❌ Error fetching transcript:', error);
+      // Only log real errors, not expected fallback failures
+      if (error.name !== 'TranscriptsDisabled') {
+        console.error('❌ Error fetching transcript:', error);
+      }
       throw error;
     }
   }
