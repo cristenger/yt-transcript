@@ -826,7 +826,7 @@ const TranscriptExtraction = (function() {
               return transcriptData;
             }
           } catch (captionError) {
-            console.warn('⚠️ Direct caption fetch failed, trying panel method:', captionError.message);
+            console.log('ℹ️ Direct caption fetch failed, trying other methods...');
           }
         }
       }
@@ -845,7 +845,7 @@ const TranscriptExtraction = (function() {
               return transcriptData;
             }
           } catch (panelError) {
-            console.warn('⚠️ Transcript panel method failed:', panelError);
+            console.log('ℹ️ Transcript panel method failed, trying other methods...');
             
             // Check if error is due to stale data
             if (panelError.message && panelError.message.includes('stale params')) {
@@ -876,11 +876,11 @@ const TranscriptExtraction = (function() {
                 return transcriptData;
               }
             } catch (panelError) {
-              console.warn('⚠️ Retry transcript panel method failed:', panelError);
+              console.log('ℹ️ Retry transcript panel also failed, trying other methods...');
             }
           }
         } else {
-          console.log('⚠️ Still no valid data after retry');
+          console.log('ℹ️ Still no valid data after retry, trying other methods...');
         }
       }
       
@@ -922,7 +922,7 @@ const TranscriptExtraction = (function() {
                 return transcriptData;
               }
             } catch (freshCaptionError) {
-              console.warn('⚠️ Fresh caption fetch also failed:', freshCaptionError.message);
+              console.log('ℹ️ Fresh caption fetch also failed, trying DOM method...');
             }
           }
         }
@@ -959,7 +959,10 @@ const TranscriptExtraction = (function() {
       throw new TranscriptErrors.TranscriptsDisabled(videoId);
       
     } catch (error) {
-      console.error('Error getting transcript URL:', error);
+      // Only log as error if it's not a TranscriptsDisabled (which is a normal case)
+      if (error.name !== 'TranscriptsDisabled') {
+        console.error('Error getting transcript URL:', error);
+      }
       throw error;
     }
   }

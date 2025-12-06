@@ -118,7 +118,7 @@
       // Try to get text tracks
       const textTracks = video.textTracks;
       if (!textTracks || textTracks.length === 0) {
-        console.warn('No text tracks found');
+        console.log('ℹ️ No text tracks found (this is normal, will try other methods)');
         return null;
       }
       
@@ -144,7 +144,7 @@
       }
       
       if (!activeTrack) {
-        console.warn('No suitable track found');
+        console.log('ℹ️ No suitable track found (will try other methods)');
         return null;
       }
       
@@ -158,7 +158,7 @@
       // Extract cues
       const cues = activeTrack.cues || activeTrack.activeCues;
       if (!cues || cues.length === 0) {
-        console.warn('No cues found in track');
+        console.log('ℹ️ No cues found in track (will try other methods)');
         return null;
       }
       
@@ -211,8 +211,7 @@
         console.log('📊 First 500 chars:', text?.substring(0, 500));
         
         if (!text || text.length === 0) {
-          console.error('❌ Status 200 but empty response!');
-          console.error('⚠️ This usually means the URL is expired or YouTube blocked the request');
+          console.log('ℹ️ Status 200 but empty response (URL may be expired, will try other methods)');
           window.dispatchEvent(new CustomEvent('transcriptFetchResponse', {
             detail: {
               eventId,
