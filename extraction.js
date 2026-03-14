@@ -14,115 +14,191 @@ const TranscriptExtraction = (function() {
    * This is a fallback method when API methods fail
    * @returns {Promise<Array|null>} Transcript data or null
    */
-  async function extractTranscriptFromDOM() {
-    try {
-      console.log('🔍 Trying to extract transcript from YouTube DOM...');
-      
-      // Check if transcript panel is already open
-      let transcriptPanel = document.querySelector('ytd-transcript-renderer[panel-content-visible]');
-      let panelWasOpened = false;
-      
-      if (!transcriptPanel) {
-        console.log('📋 Transcript panel not visible, trying to open it...');
-        
-        // Try to find and click the "Show transcript" button
-        const showTranscriptBtn = document.querySelector(
-          'ytd-video-description-transcript-section-renderer button, ' +
-          'button[aria-label*="transcript" i], ' +
-          'button[aria-label*="transcripción" i], ' +
-          'button[aria-label*="Mostrar transcripción" i]'
-        );
-        
-        if (showTranscriptBtn) {
-          console.log('🖱️ Clicking "Show transcript" button...');
-          showTranscriptBtn.click();
-          panelWasOpened = true;
-          
-          // Wait for the panel to appear
-          await new Promise(resolve => setTimeout(resolve, 1500));
-          
-          transcriptPanel = document.querySelector('ytd-transcript-renderer[panel-content-visible]');
-        }
-      }
-      
-      if (!transcriptPanel) {
-        console.log('ℹ️ Could not find or open transcript panel');
-        return null;
-      }
-      
-      console.log('✓ Transcript panel found, extracting segments...');
-      
-      // Extract transcript segments from the DOM
-      const segments = transcriptPanel.querySelectorAll('ytd-transcript-segment-renderer');
-      
-      if (!segments || segments.length === 0) {
-        console.log('ℹ️ No transcript segments found in panel');
-        return null;
-      }
-      
-      console.log(`📝 Found ${segments.length} transcript segments`);
-      
-      const transcriptData = [];
-      
-      for (const segment of segments) {
-        // Get timestamp
-        const timestampEl = segment.querySelector('.segment-timestamp');
-        const textEl = segment.querySelector('.segment-text');
-        
-        if (timestampEl && textEl) {
-          const timestampText = timestampEl.textContent.trim();
-          const text = textEl.textContent.trim();
-          
-          // Parse timestamp (formats: "0:00", "1:23", "1:23:45")
-          const timeParts = timestampText.split(':').map(p => parseInt(p, 10));
-          let startSeconds = 0;
-          
-          if (timeParts.length === 2) {
-            // MM:SS
-            startSeconds = timeParts[0] * 60 + timeParts[1];
-          } else if (timeParts.length === 3) {
-            // HH:MM:SS
-            startSeconds = timeParts[0] * 3600 + timeParts[1] * 60 + timeParts[2];
-          }
-          
+  /**
+   * Parse timestamp string to seconds
+   * @param {string} timestampText - Timestamp like "0:00", "1:23", "1:23:45"
+   * @returns {number} Seconds
+   */
+  function parseTimestamp(timestampText) {
+    const timeParts = timestampText.split(':').map(p => parseInt(p, 10));
+    if (timeParts.length === 2) {
+      return timeParts[0] * 60 + timeParts[1];
+    } else if (timeParts.length === 3) {
+      return timeParts[0] * 3600 + timeParts[1] * 60 + timeParts[2];
+    }
+    return 0;
+  }
+
+  /**
+   * Calculate durations for transcript entries based on next segment start times
+   * @param {Array} transcriptData - Array of transcript entries
+   */
+  function calculateDurations(transcriptData) {
+    for (let i = 0; i < transcriptData.length - 1; i++) {
+      transcriptData[i].duration = transcriptData[i + 1].start - transcriptData[i].start;
+    }
+    if (transcriptData.length > 0) {
+      transcriptData[transcriptData.length - 1].duration = 3;
+    }
+  }
+
+  /**
+   * Try to extract transcript segments from the modern YouTube view model DOM
+   * YouTube 2025+ uses transcript-segment-view-model instead of ytd-transcript-segment-renderer
+   * @param {Element} container - Container element to search within
+   * @returns {Array|null} Transcript data or null
+   */
+  function extractFromModernDOM(container) {
+    const segments = container.querySelectorAll('transcript-segment-view-model');
+    if (!segments || segments.length === 0) return null;
+
+    console.log(`📝 Found ${segments.length} modern transcript segments`);
+    const transcriptData = [];
+
+    for (const segment of segments) {
+      const timestampEl = segment.querySelector('.ytwTranscriptSegmentViewModelTimestamp');
+      const textEl = segment.querySelector('.yt-core-attributed-string[role="text"], .yt-core-attributed-string');
+
+      if (timestampEl && textEl) {
+        const timestampText = timestampEl.textContent.trim();
+        const text = textEl.textContent.trim();
+        if (text) {
           transcriptData.push({
-            start: startSeconds,
-            duration: 0, // Duration not available from DOM
+            start: parseTimestamp(timestampText),
+            duration: 0,
             text: text
           });
         }
       }
-      
-      if (transcriptData.length > 0) {
-        console.log(`✓ Extracted ${transcriptData.length} transcript entries from DOM`);
-        
-        // Calculate approximate durations based on next segment start times
-        for (let i = 0; i < transcriptData.length - 1; i++) {
-          transcriptData[i].duration = transcriptData[i + 1].start - transcriptData[i].start;
+    }
+
+    return transcriptData.length > 0 ? transcriptData : null;
+  }
+
+  /**
+   * Try to extract transcript segments from the legacy YouTube DOM
+   * @param {Element} container - Container element to search within
+   * @returns {Array|null} Transcript data or null
+   */
+  function extractFromLegacyDOM(container) {
+    const segments = container.querySelectorAll('ytd-transcript-segment-renderer');
+    if (!segments || segments.length === 0) return null;
+
+    console.log(`📝 Found ${segments.length} legacy transcript segments`);
+    const transcriptData = [];
+
+    for (const segment of segments) {
+      const timestampEl = segment.querySelector('.segment-timestamp');
+      const textEl = segment.querySelector('.segment-text');
+
+      if (timestampEl && textEl) {
+        const timestampText = timestampEl.textContent.trim();
+        const text = textEl.textContent.trim();
+        if (text) {
+          transcriptData.push({
+            start: parseTimestamp(timestampText),
+            duration: 0,
+            text: text
+          });
         }
-        // Last segment gets a default duration
-        if (transcriptData.length > 0) {
-          transcriptData[transcriptData.length - 1].duration = 3;
-        }
-        
-        // Close the native transcript panel if we opened it
-        if (panelWasOpened) {
-          console.log('🔒 Closing native transcript panel...');
-          const closeBtn = document.querySelector(
-            'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"] button[aria-label*="Cerrar" i], ' +
-            'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"] button[aria-label*="Close" i], ' +
-            'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"] #visibility-button button'
-          );
-          
-          if (closeBtn) {
-            closeBtn.click();
-            console.log('✓ Native panel closed');
-          }
-        }
-        
+      }
+    }
+
+    return transcriptData.length > 0 ? transcriptData : null;
+  }
+
+  /**
+   * Close the native transcript panel
+   * @param {boolean} panelWasOpened - Whether the panel was opened by us
+   */
+  function closeNativeTranscriptPanel(panelWasOpened) {
+    if (!panelWasOpened) return;
+
+    console.log('🔒 Closing native transcript panel...');
+    const closeBtn = document.querySelector(
+      'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"] button[aria-label*="Cerrar" i], ' +
+      'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"] button[aria-label*="Close" i], ' +
+      'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"] #visibility-button button, ' +
+      'ytd-engagement-panel-section-list-renderer[target-id="PAmodern_transcript_view"] button[aria-label*="Cerrar" i], ' +
+      'ytd-engagement-panel-section-list-renderer[target-id="PAmodern_transcript_view"] button[aria-label*="Close" i], ' +
+      'ytd-engagement-panel-section-list-renderer[target-id="PAmodern_transcript_view"] #visibility-button button'
+    );
+
+    if (closeBtn) {
+      closeBtn.click();
+      console.log('✓ Native panel closed');
+    }
+  }
+
+  async function extractTranscriptFromDOM() {
+    try {
+      console.log('🔍 Trying to extract transcript from YouTube DOM...');
+
+      // First check if modern transcript segments already exist anywhere in the page
+      // (e.g., in an already-opened panel)
+      let transcriptData = extractFromModernDOM(document);
+      if (transcriptData) {
+        console.log(`✓ Extracted ${transcriptData.length} entries from modern DOM (already visible)`);
+        calculateDurations(transcriptData);
         return transcriptData;
       }
-      
+
+      // Check for legacy panel already open
+      let transcriptPanel = document.querySelector('ytd-transcript-renderer[panel-content-visible]');
+      if (transcriptPanel) {
+        transcriptData = extractFromLegacyDOM(transcriptPanel);
+        if (transcriptData) {
+          console.log(`✓ Extracted ${transcriptData.length} entries from legacy DOM (already visible)`);
+          calculateDurations(transcriptData);
+          return transcriptData;
+        }
+      }
+
+      // Panel not visible - try to open it
+      console.log('📋 Transcript panel not visible, trying to open it...');
+      let panelWasOpened = false;
+
+      // Try to find and click the "Show transcript" button
+      const showTranscriptBtn = document.querySelector(
+        'ytd-video-description-transcript-section-renderer button, ' +
+        'button[aria-label*="transcript" i], ' +
+        'button[aria-label*="transcripción" i], ' +
+        'button[aria-label*="Mostrar transcripción" i]'
+      );
+
+      if (showTranscriptBtn) {
+        console.log('🖱️ Clicking "Show transcript" button...');
+        showTranscriptBtn.click();
+        panelWasOpened = true;
+
+        // Wait for the panel to load (modern panels may take longer)
+        await new Promise(resolve => setTimeout(resolve, 2500));
+
+        // Try modern DOM first (YouTube 2025+)
+        transcriptData = extractFromModernDOM(document);
+        if (transcriptData) {
+          console.log(`✓ Extracted ${transcriptData.length} entries from modern DOM`);
+          calculateDurations(transcriptData);
+          closeNativeTranscriptPanel(panelWasOpened);
+          return transcriptData;
+        }
+
+        // Try legacy DOM
+        transcriptPanel = document.querySelector('ytd-transcript-renderer[panel-content-visible]');
+        if (transcriptPanel) {
+          transcriptData = extractFromLegacyDOM(transcriptPanel);
+          if (transcriptData) {
+            console.log(`✓ Extracted ${transcriptData.length} entries from legacy DOM`);
+            calculateDurations(transcriptData);
+            closeNativeTranscriptPanel(panelWasOpened);
+            return transcriptData;
+          }
+        }
+
+        closeNativeTranscriptPanel(panelWasOpened);
+      }
+
+      console.log('ℹ️ Could not extract transcript from DOM');
       return null;
     } catch (error) {
       console.log('ℹ️ Error extracting transcript from DOM, will show error to user');
@@ -360,27 +436,30 @@ const TranscriptExtraction = (function() {
    */
   function findTranscriptPanel(panels) {
     if (!panels || !Array.isArray(panels)) return null;
-    
+
     return panels.find(p => {
       const renderer = p.engagementPanelSectionListRenderer;
       if (!renderer) return false;
-      
+
       // Method 1: Check for getTranscriptEndpoint (most reliable)
       const hasEndpoint = renderer.content?.continuationItemRenderer?.continuationEndpoint?.getTranscriptEndpoint;
       if (hasEndpoint) return true;
-      
+
       // Method 2: Check title text in various languages
       const title = renderer.header?.engagementPanelTitleHeaderRenderer?.title?.simpleText?.toLowerCase() || '';
       if (TRANSCRIPT_TITLE_VARIANTS.some(variant => title.includes(variant))) return true;
-      
+
       // Method 3: Check for transcript in panel identifier
       const panelId = renderer.panelIdentifier?.toLowerCase() || '';
       if (panelId.includes('transcript')) return true;
-      
-      // Method 4: Check targetId for engagement-panel-transcript
+
+      // Method 4: Check targetId for engagement-panel-transcript or modern transcript
       const targetId = renderer.targetId?.toLowerCase() || '';
       if (targetId.includes('transcript')) return true;
-      
+
+      // Method 5: Check targetId for modern panel IDs (YouTube 2025+)
+      if (targetId === 'pamodern_transcript_view') return true;
+
       return false;
     });
   }
@@ -589,29 +668,75 @@ const TranscriptExtraction = (function() {
         }
       }
       
-      // Extract segments
-      const segments = finalJson.actions?.[0]?.updateEngagementPanelAction?.content?.transcriptRenderer
+      // Extract segments - try multiple response paths (YouTube changes these periodically)
+      let segments = [];
+
+      // Path 1: Legacy format (pre-2025)
+      segments = finalJson.actions?.[0]?.updateEngagementPanelAction?.content?.transcriptRenderer
         ?.content?.transcriptSearchPanelRenderer?.body?.transcriptSegmentListRenderer?.initialSegments || [];
-      
+
+      // Path 2: Modern format (2025+) - different nesting
+      if (segments.length === 0) {
+        segments = finalJson.actions?.[0]?.updateEngagementPanelAction?.content?.transcriptRenderer
+          ?.body?.transcriptSegmentListRenderer?.initialSegments || [];
+      }
+
+      // Path 3: Direct transcript segments in actions
+      if (segments.length === 0) {
+        segments = finalJson.actions?.[0]?.updateEngagementPanelAction?.content
+          ?.structuredDescriptionContentRenderer?.items?.flatMap(item =>
+            item?.transcriptSectionRenderer?.content?.transcriptSegmentListRenderer?.initialSegments || []
+          ) || [];
+      }
+
+      // Path 4: Try transcriptBodyRenderer (newer API format)
+      if (segments.length === 0) {
+        segments = finalJson.actions?.[0]?.updateEngagementPanelAction?.content
+          ?.transcriptBodyRenderer?.segmentList?.initialSegments || [];
+      }
+
       if (segments.length === 0) {
         console.warn('⚠️ API returned empty segments');
+        console.log('📊 Response structure keys:', JSON.stringify(Object.keys(finalJson || {})));
+        if (finalJson.actions?.[0]) {
+          console.log('📊 Action keys:', JSON.stringify(Object.keys(finalJson.actions[0])));
+          const updateAction = finalJson.actions[0].updateEngagementPanelAction;
+          if (updateAction?.content) {
+            console.log('📊 Content keys:', JSON.stringify(Object.keys(updateAction.content)));
+          }
+        }
         return [];
       }
-      
+
       const transcriptData = segments.map(item => {
+        // Legacy: transcriptSegmentRenderer
         const seg = item?.transcriptSegmentRenderer;
-        if (!seg) return null;
-        
-        const text = seg.snippet?.runs?.map(r => r.text).join(" ") || "";
-        const startMs = seg.startMs || 0;
-        
-        return {
-          start: startMs / 1000,
-          duration: 0,
-          text: text
-        };
-      }).filter(item => item !== null);
-      
+        if (seg) {
+          const text = seg.snippet?.runs?.map(r => r.text).join(" ") || "";
+          const startMs = seg.startMs || 0;
+          return {
+            start: startMs / 1000,
+            duration: 0,
+            text: text
+          };
+        }
+
+        // Modern: macroMarkersPanelItemViewModel > timelineItemViewModel
+        const modernSeg = item?.macroMarkersPanelItemViewModel?.timelineItemViewModel
+          ?.transcriptSegmentViewModel;
+        if (modernSeg) {
+          const text = modernSeg.text || modernSeg.snippet || "";
+          const startMs = modernSeg.startMs || modernSeg.timestampMs || 0;
+          return {
+            start: startMs / 1000,
+            duration: 0,
+            text: text
+          };
+        }
+
+        return null;
+      }).filter(item => item !== null && item.text);
+
       return transcriptData;
       
     } catch (error) {
@@ -944,10 +1069,39 @@ const TranscriptExtraction = (function() {
       }
       
       // PRIORITY 4: Extract from YouTube's native transcript panel DOM
+      // This now handles both modern (2025+) and legacy transcript DOM structures
       console.log('⚠️ Trying DOM extraction as final fallback...');
       const domTranscript = await extractTranscriptFromDOM();
       if (domTranscript && domTranscript.length > 0) {
         return domTranscript;
+      }
+
+      // PRIORITY 5: Try to programmatically open the modern transcript panel
+      console.log('⚠️ Trying to trigger modern transcript panel...');
+      try {
+        const modernPanel = document.querySelector(
+          'ytd-engagement-panel-section-list-renderer[target-id="PAmodern_transcript_view"]'
+        );
+        if (modernPanel) {
+          // Try to trigger the panel to load by clicking the description transcript button
+          const descBtn = document.querySelector(
+            'ytd-video-description-transcript-section-renderer #primary-button button'
+          );
+          if (descBtn) {
+            descBtn.click();
+            await new Promise(resolve => setTimeout(resolve, 3000));
+
+            // Check for modern segments
+            const modernData = extractFromModernDOM(document);
+            if (modernData && modernData.length > 0) {
+              calculateDurations(modernData);
+              closeNativeTranscriptPanel(true);
+              return modernData;
+            }
+          }
+        }
+      } catch (e) {
+        console.log('ℹ️ Modern panel trigger failed');
       }
       
       // If all methods fail, throw error

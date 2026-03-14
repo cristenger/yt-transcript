@@ -25,17 +25,76 @@
         GL: ytcfg.data_.GL,
         LOGGED_IN: ytcfg.data_.LOGGED_IN
       } : null;
-      
+
+      // Try global variables first
+      let ytData = typeof ytInitialData !== 'undefined' ? ytInitialData : null;
+      let playerResponse = typeof ytInitialPlayerResponse !== 'undefined' ? ytInitialPlayerResponse : null;
+
+      // Fallback: extract from script tags if globals are not available
+      if (!playerResponse || !ytData) {
+        console.log('⚠️ Global variables not found, extracting from script tags...');
+        const scripts = document.querySelectorAll('script');
+        for (const script of scripts) {
+          const text = script.textContent;
+          if (!text) continue;
+
+          if (!playerResponse) {
+            // Try ytInitialPlayerResponse
+            const playerMatch = text.match(/var\s+ytInitialPlayerResponse\s*=\s*(\{[\s\S]*?\})\s*;/);
+            if (playerMatch) {
+              try {
+                playerResponse = JSON.parse(playerMatch[1]);
+                console.log('✓ Extracted ytInitialPlayerResponse from script tag');
+              } catch (e) { /* ignore parse errors */ }
+            }
+          }
+
+          if (!ytData) {
+            // Try ytInitialData
+            const dataMatch = text.match(/var\s+ytInitialData\s*=\s*(\{[\s\S]*?\})\s*;/);
+            if (dataMatch) {
+              try {
+                ytData = JSON.parse(dataMatch[1]);
+                console.log('✓ Extracted ytInitialData from script tag');
+              } catch (e) { /* ignore parse errors */ }
+            }
+          }
+
+          if (playerResponse && ytData) break;
+        }
+      }
+
+      // Fallback: try to get player response from ytplayer.config or movie_player
+      if (!playerResponse) {
+        try {
+          const player = document.getElementById('movie_player');
+          if (player && typeof player.getPlayerResponse === 'function') {
+            playerResponse = player.getPlayerResponse();
+            console.log('✓ Got player response from movie_player API');
+          }
+        } catch (e) { /* player API may not be available */ }
+      }
+
+      // Fallback: try ytplayer.config.args.raw_player_response
+      if (!playerResponse) {
+        try {
+          if (typeof ytplayer !== 'undefined' && ytplayer?.config?.args?.raw_player_response) {
+            playerResponse = ytplayer.config.args.raw_player_response;
+            console.log('✓ Got player response from ytplayer.config');
+          }
+        } catch (e) { /* ignore */ }
+      }
+
       const data = {
-        ytInitialData: typeof ytInitialData !== 'undefined' ? ytInitialData : null,
-        ytInitialPlayerResponse: typeof ytInitialPlayerResponse !== 'undefined' ? ytInitialPlayerResponse : null,
+        ytInitialData: ytData,
+        ytInitialPlayerResponse: playerResponse,
         ytcfg: ytcfgData
       };
-      
+
       // Debug: Check for caption tracks
       const captions = data.ytInitialPlayerResponse?.captions;
       const captionTracks = captions?.playerCaptionsTracklistRenderer?.captionTracks;
-      
+
       console.log('Extracted data:', {
         hasYtInitialData: !!data.ytInitialData,
         hasYtInitialPlayerResponse: !!data.ytInitialPlayerResponse,
@@ -49,7 +108,7 @@
           hasBaseUrl: !!t.baseUrl
         })) || []
       });
-      
+
       window.dispatchEvent(new CustomEvent('dataExtractResponse', {
         detail: {
           eventId,
