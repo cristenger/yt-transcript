@@ -8,6 +8,7 @@ const VideoSync = (function() {
   let currentActiveIndex = -1;
   let isUserScrolling = false;
   let scrollTimeout = null;
+  let boundInteractionHandler = null;
 
   /**
    * Seek video to specific time
@@ -132,41 +133,13 @@ const VideoSync = (function() {
 
     const container = document.getElementById('transcript-content');
     if (container) {
-      // Detect scroll within container
-      container.addEventListener('scroll', handleUserScroll, { passive: true });
-      
-      // Detect mousedown interaction
-      container.addEventListener('mousedown', () => {
-        isUserScrolling = true;
-        if (scrollTimeout) {
-          clearTimeout(scrollTimeout);
-        }
-        scrollTimeout = setTimeout(() => {
-          isUserScrolling = false;
-        }, 5000);
-      }, { passive: true });
-      
-      // Detect wheel events (mouse scroll)
-      container.addEventListener('wheel', () => {
-        isUserScrolling = true;
-        if (scrollTimeout) {
-          clearTimeout(scrollTimeout);
-        }
-        scrollTimeout = setTimeout(() => {
-          isUserScrolling = false;
-        }, 5000);
-      }, { passive: true });
-      
-      // Detect touch events (mobile/tablet scroll)
-      container.addEventListener('touchstart', () => {
-        isUserScrolling = true;
-        if (scrollTimeout) {
-          clearTimeout(scrollTimeout);
-        }
-        scrollTimeout = setTimeout(() => {
-          isUserScrolling = false;
-        }, 5000);
-      }, { passive: true });
+      // Use a single named handler for all interaction events to avoid memory leaks
+      boundInteractionHandler = handleUserScroll;
+
+      container.addEventListener('scroll', boundInteractionHandler, { passive: true });
+      container.addEventListener('mousedown', boundInteractionHandler, { passive: true });
+      container.addEventListener('wheel', boundInteractionHandler, { passive: true });
+      container.addEventListener('touchstart', boundInteractionHandler, { passive: true });
     }
   }
 
@@ -181,11 +154,13 @@ const VideoSync = (function() {
     }
 
     const container = document.getElementById('transcript-content');
-    if (container) {
-      // Remove all event listeners that were added
-      container.removeEventListener('scroll', handleUserScroll);
-      // Note: We can't remove anonymous functions, but cloning in resetTranscriptPanel handles this
+    if (container && boundInteractionHandler) {
+      container.removeEventListener('scroll', boundInteractionHandler);
+      container.removeEventListener('mousedown', boundInteractionHandler);
+      container.removeEventListener('wheel', boundInteractionHandler);
+      container.removeEventListener('touchstart', boundInteractionHandler);
     }
+    boundInteractionHandler = null;
 
     currentActiveIndex = -1;
     isUserScrolling = false;

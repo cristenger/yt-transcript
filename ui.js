@@ -17,6 +17,17 @@ const TranscriptUI = (function () {
   };
 
   /**
+   * Escape HTML special characters to prevent XSS
+   * @param {string} text - Raw text
+   * @returns {string} Escaped text safe for innerHTML
+   */
+  function escapeHTML(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  /**
    * Set transcript data
    * @param {Array} data - Transcript data array
    */
@@ -236,7 +247,7 @@ const TranscriptUI = (function () {
     container.innerHTML = data.map((entry, index) => `
       <div class="transcript-entry" data-start="${entry.start}" data-index="${index}">
         <span class="timestamp">${TranscriptUtils.formatTime(entry.start)}</span>
-        <span class="transcript-text">${entry.text}</span>
+        <span class="transcript-text">${escapeHTML(entry.text)}</span>
       </div>
     `).join('');
 
@@ -282,7 +293,8 @@ const TranscriptUI = (function () {
     const regex = new RegExp(`(${escapedSearch})`, 'gi');
 
     container.innerHTML = filtered.map((entry, index) => {
-      const highlightedText = entry.text.replace(regex, '<mark>$1</mark>');
+      const safeText = escapeHTML(entry.text);
+      const highlightedText = safeText.replace(regex, '<mark>$1</mark>');
       const originalIndex = transcriptData.indexOf(entry);
       return `
         <div class="transcript-entry" data-start="${entry.start}" data-index="${originalIndex}">
@@ -312,11 +324,11 @@ const TranscriptUI = (function () {
     if (container) {
       container.innerHTML = `
         <div class="error">
-          ${message}
+          ${escapeHTML(message)}
           <br><br>
-          <strong>💡 Troubleshooting tips:</strong><br>
+          <strong>Troubleshooting tips:</strong><br>
           1. Check if the video has captions available<br>
-          2. Try opening YouTube's native transcript panel (click ⋯ → Show transcript)<br>
+          2. Try opening YouTube's native transcript panel (click ... &gt; Show transcript)<br>
           3. Enable subtitles manually and click "Retry"<br>
           4. Some videos may have transcripts disabled by the uploader
         </div>
