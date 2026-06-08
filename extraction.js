@@ -59,10 +59,24 @@ const TranscriptExtraction = (function() {
     'ytd-transcript-segment-list-renderer',
     '[class*="TranscriptSegmentList"]'
   ].join(', ');
+  const NATIVE_TRANSCRIPT_PANEL_SELECTOR = [
+    'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-searchable-transcript"]',
+    'ytd-engagement-panel-section-list-renderer[target-id="PAmodern_transcript_view" i]',
+    'ytd-engagement-panel-section-list-renderer[target-id*="transcript" i]'
+  ].join(', ');
   const TRANSCRIPT_LABEL_RE = /transcript|transcripción|transcripcion|transcrição|transcricao|transkript|transcription|trascrizione|트랜스크립트|字幕|文字起こし|ondertiteling/i;
   const MORE_ACTIONS_LABEL_RE = /more|actions|options|más|mas|acciones|opciones|mais|mehr|plus|altro/i;
+  const DESCRIPTION_EXPAND_LABEL_RE = /(?:mostrar más|show more|more|más|mas|expand|ver más|ver mas)/i;
+  const NON_TRANSCRIPT_TEXT_RE = /(?:mirar video completo|watch full video|reproducción automática|autoplay|arrastra hacia arriba|búsqueda más precisa)/i;
+  const RECOMMENDATION_VIEW_METADATA_RE = /\b(?:vistas?|views?|visualizaciones?)\b/i;
+  const RECOMMENDATION_AGE_METADATA_RE = /\b(?:hace|ago)\b/i;
+  const RECOMMENDATION_LIVE_BADGE_RE = /(?:\ben vivo\b|(?:^|[•|])\s*live(?:\s|\(|$)|\(\d+\+\))/i;
+  const LOCALIZED_TIME_PREFIX_RE = /^\s*(?:(?:\d+\s+horas?\s+y\s+)?\d+\s+minutos?\s+y\s+\d+\s+segundos?|\d+\s+minuto\s+y\s+\d+\s+segundos?|\d+\s+segundos?|\d+\s+hours?\s+(?:and\s+)?\d+\s+minutes?\s+(?:and\s+)?\d+\s+seconds?|\d+\s+minutes?\s+(?:and\s+)?\d+\s+seconds?|\d+\s+seconds?)\s+/i;
+  const RAW_TIMECODE_RE = /\b\d{2};\d{2};\d{2};\d{2}\s*-\s*\d{2};\d{2};\d{2};\d{2}\b\s*(?:Unknown\s*)?/gi;
 
   function getElementLabel(element) {
+    if (!element) return '';
+
     return [
       element.getAttribute?.('aria-label') || '',
       element.getAttribute?.('title') || '',
@@ -76,6 +90,18 @@ const TranscriptExtraction = (function() {
 
   function isMoreActionsButton(element) {
     return MORE_ACTIONS_LABEL_RE.test(getElementLabel(element));
+  }
+
+  function isDescriptionExpandButton(element) {
+    return DESCRIPTION_EXPAND_LABEL_RE.test(getElementLabel(element));
+  }
+
+  function hasTranscriptNearby(element, maxDepth = 6) {
+    let node = element;
+    for (let depth = 0; depth <= maxDepth && node; depth += 1, node = node.parentElement) {
+      if (isTranscriptTrigger(node)) return true;
+    }
+    return false;
   }
 
   function isInsideExtensionPanel(element) {
@@ -93,6 +119,133 @@ const TranscriptExtraction = (function() {
     return element.getClientRects().length > 0;
   }
 
+  function getClickableAncestor(element) {
+    return element?.closest?.([
+      'button',
+      '[role="button"]',
+      'a',
+      'yt-button-shape',
+      'yt-button-view-model',
+      'ytd-button-renderer',
+      'tp-yt-paper-button',
+      'ytd-menu-service-item-renderer',
+      'yt-list-item-view-model'
+    ].join(', '));
+  }
+
+  function clickTranscriptCandidate(element, reason, preferElement = false) {
+    const clickable = getClickableAncestor(element);
+    let target = preferElement && isVisibleElement(element) ? element : (clickable || element);
+    if (!target) return false;
+    if (!isVisibleElement(target)) {
+      if (!isVisibleElement(element)) return false;
+      target = element;
+    }
+
+    try {
+      target.scrollIntoView?.({ block: 'center', inline: 'center' });
+    } catch (error) {
+      // Non-critical: clicking can still work without scrolling.
+    }
+
+    console.log(`🖱️ Clicking transcript control (${reason})`);
+    if (typeof PointerEvent === 'function') {
+      target.dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+        pointerType: 'mouse',
+        isPrimary: true,
+        view: window
+      }));
+    }
+    target.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+    target.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+    if (typeof PointerEvent === 'function') {
+      target.dispatchEvent(new PointerEvent('pointerup', {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+        pointerType: 'mouse',
+        isPrimary: true,
+        view: window
+      }));
+    }
+    target.click();
+    return true;
+  }
+
+  function getTranscriptControlCandidates(container = document) {
+    const selectors = [
+      'button',
+      '[role="button"]',
+      'yt-button-shape',
+      'yt-button-view-model',
+      'ytd-button-renderer',
+      'tp-yt-paper-button'
+    ].join(', ');
+
+    return [...container.querySelectorAll(selectors)]
+      .filter(el => !isInsideExtensionPanel(el))
+      .filter(el => isTranscriptTrigger(el))
+      .filter(el => isVisibleElement(el) || isVisibleElement(getClickableAncestor(el)));
+  }
+
+  function findTranscriptMenuItem() {
+    const menuItems = document.querySelectorAll(
+      'ytd-menu-service-item-renderer, tp-yt-paper-item, yt-list-item-view-model, [role="menuitem"]'
+    );
+
+    return [...menuItems].find(item =>
+      !isInsideExtensionPanel(item) &&
+      isTranscriptTrigger(item) &&
+      (isVisibleElement(item) || isVisibleElement(getClickableAncestor(item)))
+    ) || null;
+  }
+
+  function waitForTranscriptMenuItem(timeoutMs = 2000) {
+    return new Promise((resolve) => {
+      const start = Date.now();
+
+      const poll = () => {
+        const item = findTranscriptMenuItem();
+        if (item || Date.now() - start >= timeoutMs) {
+          resolve(item);
+          return;
+        }
+        setTimeout(poll, 100);
+      };
+
+      poll();
+    });
+  }
+
+  async function tryExpandDescription() {
+    const description = document.querySelector(
+      '#description, #description-inline-expander, ytd-text-inline-expander, ytd-watch-metadata'
+    );
+    if (!description) return false;
+
+    const expandCandidates = [
+      ...description.querySelectorAll(
+        '#expand, tp-yt-paper-button#expand, button[aria-label], [role="button"], yt-button-shape, ytd-button-renderer'
+      )
+    ].filter(el =>
+      !isInsideExtensionPanel(el) &&
+      isDescriptionExpandButton(el) &&
+      (isVisibleElement(el) || isVisibleElement(getClickableAncestor(el)))
+    );
+
+    if (expandCandidates.length === 0) return false;
+
+    if (clickTranscriptCandidate(expandCandidates[0], 'description expand')) {
+      await new Promise(resolve => setTimeout(resolve, 800));
+      return true;
+    }
+
+    return false;
+  }
+
   function getMatches(container, selector) {
     const matches = [];
     if (container.matches?.(selector)) {
@@ -106,13 +259,16 @@ const TranscriptExtraction = (function() {
     const roots = [];
 
     for (const root of getMatches(container, NATIVE_TRANSCRIPT_ROOT_SELECTOR)) {
-      if (isVisibleElement(root)) {
+      if (isVisibleElement(root) || root.getAttribute?.('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED') {
         roots.push(root);
       }
     }
 
     for (const panel of getMatches(container, 'ytd-engagement-panel-section-list-renderer')) {
-      if (isVisibleElement(panel) && isTranscriptTrigger(panel)) {
+      if (
+        (isVisibleElement(panel) || panel.getAttribute?.('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED') &&
+        isTranscriptTrigger(panel)
+      ) {
         roots.push(panel);
       }
     }
@@ -120,8 +276,8 @@ const TranscriptExtraction = (function() {
     for (const segmentContainer of getMatches(container, TRANSCRIPT_SEGMENT_CONTAINER_SELECTOR)) {
       if (!isVisibleElement(segmentContainer)) continue;
 
-      const root = segmentContainer.closest(NATIVE_TRANSCRIPT_ROOT_SELECTOR) || segmentContainer;
-      if (!isInsideExtensionPanel(root)) {
+      const root = segmentContainer.closest(NATIVE_TRANSCRIPT_ROOT_SELECTOR);
+      if (root && !isInsideExtensionPanel(root)) {
         roots.push(root);
       }
     }
@@ -129,17 +285,75 @@ const TranscriptExtraction = (function() {
     return [...new Set(roots)];
   }
 
+  function getNativeTranscriptPanels(container = document) {
+    return [...container.querySelectorAll(NATIVE_TRANSCRIPT_PANEL_SELECTOR)]
+      .filter(panel => !isInsideExtensionPanel(panel));
+  }
+
+  async function tryRevealNativeTranscriptPanel() {
+    const panels = getNativeTranscriptPanels(document);
+    if (panels.length === 0) return false;
+
+    for (const panel of panels) {
+      const targetId = panel.getAttribute('target-id') || 'transcript panel';
+      console.log(`🪟 Revealing native transcript panel (${targetId})`);
+
+      panel.setAttribute('visibility', 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED');
+      panel.visibility = 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED';
+      panel.removeAttribute('hidden');
+      panel.removeAttribute('collapsed');
+
+      if (panel.style?.display === 'none') {
+        panel.style.display = '';
+      }
+    }
+
+    await new Promise(resolve => setTimeout(resolve, 2000));
+    return true;
+  }
+
+  function getCurrentVideoDuration() {
+    const video = document.querySelector('video');
+    return Number.isFinite(video?.duration) ? video.duration : null;
+  }
+
+  function cleanTranscriptText(text) {
+    return (text || '')
+      .replace(/\u00a0/g, ' ')
+      .replace(RAW_TIMECODE_RE, '')
+      .replace(LOCALIZED_TIME_PREFIX_RE, '')
+      .replace(/^\s*Unknown\s+/i, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+  }
+
+  function isLikelyNonTranscriptText(text) {
+    const normalizedText = (text || '').replace(/\u00a0/g, ' ').trim();
+    if (!normalizedText || /^[\s/•|·-]+$/.test(normalizedText)) return true;
+    if (NON_TRANSCRIPT_TEXT_RE.test(normalizedText)) return true;
+
+    const hasRecommendationMetadata =
+      RECOMMENDATION_VIEW_METADATA_RE.test(normalizedText) ||
+      (RECOMMENDATION_AGE_METADATA_RE.test(normalizedText) && /[•|]/.test(normalizedText)) ||
+      RECOMMENDATION_LIVE_BADGE_RE.test(normalizedText);
+
+    return hasRecommendationMetadata;
+  }
+
   function normalizeTranscriptData(transcriptData, minSegments = 1) {
     if (!Array.isArray(transcriptData)) return null;
 
     const seen = new Set();
+    const videoDuration = getCurrentVideoDuration();
     const normalized = transcriptData
       .map(entry => ({
         start: Number(entry.start),
         duration: Number(entry.duration) || 0,
-        text: (entry.text || '').replace(/\s+/g, ' ').trim()
+        text: cleanTranscriptText(entry.text)
       }))
       .filter(entry => Number.isFinite(entry.start) && entry.start >= 0 && entry.text)
+      .filter(entry => !isLikelyNonTranscriptText(entry.text))
+      .filter(entry => videoDuration === null || entry.start <= videoDuration + 30)
       .sort((a, b) => a.start - b.start)
       .filter(entry => {
         const key = `${Math.round(entry.start * 1000)}:${entry.text}`;
@@ -279,7 +493,7 @@ const TranscriptExtraction = (function() {
           .filter(t => t && !TIMESTAMP_RE.test(t))
           .join(' ')
           .trim();
-        if (candidateText) {
+        if (candidateText && !isLikelyNonTranscriptText(candidateText)) {
           seen.add(segment);
           transcriptData.push({
             start: parseTimestamp(txt),
@@ -362,16 +576,44 @@ const TranscriptExtraction = (function() {
       { selector: '#primary-button ytd-button-renderer button', requireTranscriptLabel: true },
     ];
 
-    for (const { selector, requireTranscriptLabel } of descSelectors) {
-      const buttons = document.querySelectorAll(selector);
-      for (const btn of buttons) {
-        if (!isVisibleElement(btn)) continue;
-        if (requireTranscriptLabel && !isTranscriptTrigger(btn)) continue;
+    const clickVisibleTranscriptControl = () => {
+      for (const { selector, requireTranscriptLabel } of descSelectors) {
+        const buttons = document.querySelectorAll(selector);
+        for (const btn of buttons) {
+          if (!isVisibleElement(btn)) continue;
+          if (requireTranscriptLabel && !isTranscriptTrigger(btn)) continue;
 
-        console.log(`🖱️ Clicking description transcript button (${selector})`);
-        btn.click();
-        return true;
+          if (clickTranscriptCandidate(btn, selector)) return true;
+        }
       }
+
+      for (const control of getTranscriptControlCandidates(document)) {
+        if (clickTranscriptCandidate(control, 'visible transcript-labeled control')) return true;
+      }
+
+      return false;
+    };
+
+    if (clickVisibleTranscriptControl()) return true;
+
+    if (await tryExpandDescription()) {
+      if (clickVisibleTranscriptControl()) return true;
+    }
+
+    // YouTube's current button surface often exposes the clickable shape as a
+    // nested feedback div rather than a directly labeled button.
+    const touchFeedbackCandidates = document.querySelectorAll(
+      'ytd-video-description-transcript-section-renderer .ytSpecTouchFeedbackShapeFill, ' +
+      'ytd-structured-description-content-renderer .ytSpecTouchFeedbackShapeFill, ' +
+      'ytd-watch-metadata .ytSpecTouchFeedbackShapeFill'
+    );
+    for (const feedback of touchFeedbackCandidates) {
+      const transcriptSection = feedback.closest('ytd-video-description-transcript-section-renderer');
+      const clickable = getClickableAncestor(feedback);
+
+      if (!isVisibleElement(feedback) && !isVisibleElement(clickable)) continue;
+      if (!transcriptSection && !isTranscriptTrigger(clickable) && !hasTranscriptNearby(feedback)) continue;
+      if (clickTranscriptCandidate(feedback, 'ytSpecTouchFeedbackShapeFill', true)) return true;
     }
 
     // aria-label variants across languages
@@ -390,9 +632,7 @@ const TranscriptExtraction = (function() {
       for (const btn of buttons) {
         if (!isVisibleElement(btn)) continue;
 
-        console.log(`🖱️ Clicking aria-label transcript button (${sel})`);
-        btn.click();
-        return true;
+        if (clickTranscriptCandidate(btn, sel)) return true;
       }
     }
 
@@ -409,19 +649,11 @@ const TranscriptExtraction = (function() {
       moreCandidates.find(btn => btn.closest('ytd-menu-renderer'));
 
     if (moreBtn) {
-      console.log('🖱️ Opening "More actions" menu');
-      moreBtn.click();
-      await new Promise(r => setTimeout(r, 800));
+      clickTranscriptCandidate(moreBtn, 'More actions menu');
+      const transcriptMenuItem = await waitForTranscriptMenuItem(2500);
 
-      const menuItems = document.querySelectorAll(
-        'ytd-menu-service-item-renderer, tp-yt-paper-item, yt-list-item-view-model, [role="menuitem"]'
-      );
-      for (const item of menuItems) {
-        if (isVisibleElement(item) && isTranscriptTrigger(item)) {
-          console.log('🖱️ Clicking "Show transcript" menu item');
-          item.click();
-          return true;
-        }
+      if (transcriptMenuItem) {
+        if (clickTranscriptCandidate(transcriptMenuItem, 'Show transcript menu item')) return true;
       }
       // Menu opened but no transcript option — close it
       document.body.click();
@@ -468,6 +700,17 @@ const TranscriptExtraction = (function() {
       if (data) {
         console.log(`✓ Extracted ${data.length} entries from DOM (already visible)`);
         return data;
+      }
+
+      const revealedNativePanel = await tryRevealNativeTranscriptPanel();
+      if (revealedNativePanel) {
+        data = await waitForSegments(6000);
+        closeNativeTranscriptPanel(true);
+
+        if (data && data.length > 0) {
+          console.log(`✓ Extracted ${data.length} entries from revealed native panel`);
+          return data;
+        }
       }
 
       // Try to trigger YouTube's native transcript panel
@@ -844,7 +1087,7 @@ const TranscriptExtraction = (function() {
         throw new Error("Could not find transcript panel");
       }
       
-      console.log('🔧 CODE VERSION: 2024-12-05-CAPTION-PAGECONTEXT-V6');
+      console.log('🔧 CODE VERSION: 2026-06-08-DOM-TRANSCRIPT-REVEAL-V3');
       
       // Try to extract available languages from player response
       const playerResponse = ytData?.ytInitialPlayerResponse || window.ytInitialPlayerResponse;
