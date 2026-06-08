@@ -35,7 +35,8 @@ const TranscriptExtraction = (function() {
    */
   function calculateDurations(transcriptData) {
     for (let i = 0; i < transcriptData.length - 1; i++) {
-      transcriptData[i].duration = transcriptData[i + 1].start - transcriptData[i].start;
+      const duration = transcriptData[i + 1].start - transcriptData[i].start;
+      transcriptData[i].duration = duration > 0 ? duration : 0;
     }
     if (transcriptData.length > 0) {
       transcriptData[transcriptData.length - 1].duration = 3;
@@ -44,6 +45,116 @@ const TranscriptExtraction = (function() {
 
   // Timestamp pattern: "0:00", "1:23", "1:23:45"
   const TIMESTAMP_RE = /^\s*\d{1,2}(?::\d{1,2}){1,2}\s*$/;
+  const MIN_GENERIC_DOM_SEGMENTS = 2;
+  const EXTENSION_PANEL_SELECTOR = '#yt-transcript-panel';
+  const NATIVE_TRANSCRIPT_ROOT_SELECTOR = [
+    'ytd-engagement-panel-section-list-renderer[target-id*="transcript" i]',
+    'ytd-engagement-panel-section-list-renderer[target-id="PAmodern_transcript_view" i]',
+    'ytd-transcript-renderer',
+    'ytd-transcript-search-panel-renderer',
+    'transcript-search-panel-renderer'
+  ].join(', ');
+  const TRANSCRIPT_SEGMENT_CONTAINER_SELECTOR = [
+    '#segments-container',
+    'ytd-transcript-segment-list-renderer',
+    '[class*="TranscriptSegmentList"]'
+  ].join(', ');
+  const TRANSCRIPT_LABEL_RE = /transcript|transcripción|transcripcion|transcrição|transcricao|transkript|transcription|trascrizione|트랜스크립트|字幕|文字起こし|ondertiteling/i;
+  const MORE_ACTIONS_LABEL_RE = /more|actions|options|más|mas|acciones|opciones|mais|mehr|plus|altro/i;
+
+  function getElementLabel(element) {
+    return [
+      element.getAttribute?.('aria-label') || '',
+      element.getAttribute?.('title') || '',
+      element.textContent || ''
+    ].join(' ').trim();
+  }
+
+  function isTranscriptTrigger(element) {
+    return TRANSCRIPT_LABEL_RE.test(getElementLabel(element));
+  }
+
+  function isMoreActionsButton(element) {
+    return MORE_ACTIONS_LABEL_RE.test(getElementLabel(element));
+  }
+
+  function isInsideExtensionPanel(element) {
+    return !!element.closest?.(EXTENSION_PANEL_SELECTOR);
+  }
+
+  function isVisibleElement(element) {
+    if (!element || isInsideExtensionPanel(element)) return false;
+
+    const style = window.getComputedStyle?.(element);
+    if (style && (style.display === 'none' || style.visibility === 'hidden')) {
+      return false;
+    }
+
+    return element.getClientRects().length > 0;
+  }
+
+  function getMatches(container, selector) {
+    const matches = [];
+    if (container.matches?.(selector)) {
+      matches.push(container);
+    }
+    matches.push(...container.querySelectorAll(selector));
+    return matches;
+  }
+
+  function getNativeTranscriptRoots(container = document) {
+    const roots = [];
+
+    for (const root of getMatches(container, NATIVE_TRANSCRIPT_ROOT_SELECTOR)) {
+      if (isVisibleElement(root)) {
+        roots.push(root);
+      }
+    }
+
+    for (const panel of getMatches(container, 'ytd-engagement-panel-section-list-renderer')) {
+      if (isVisibleElement(panel) && isTranscriptTrigger(panel)) {
+        roots.push(panel);
+      }
+    }
+
+    for (const segmentContainer of getMatches(container, TRANSCRIPT_SEGMENT_CONTAINER_SELECTOR)) {
+      if (!isVisibleElement(segmentContainer)) continue;
+
+      const root = segmentContainer.closest(NATIVE_TRANSCRIPT_ROOT_SELECTOR) || segmentContainer;
+      if (!isInsideExtensionPanel(root)) {
+        roots.push(root);
+      }
+    }
+
+    return [...new Set(roots)];
+  }
+
+  function normalizeTranscriptData(transcriptData, minSegments = 1) {
+    if (!Array.isArray(transcriptData)) return null;
+
+    const seen = new Set();
+    const normalized = transcriptData
+      .map(entry => ({
+        start: Number(entry.start),
+        duration: Number(entry.duration) || 0,
+        text: (entry.text || '').replace(/\s+/g, ' ').trim()
+      }))
+      .filter(entry => Number.isFinite(entry.start) && entry.start >= 0 && entry.text)
+      .sort((a, b) => a.start - b.start)
+      .filter(entry => {
+        const key = `${Math.round(entry.start * 1000)}:${entry.text}`;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+
+    if (normalized.length < minSegments) {
+      return null;
+    }
+
+    calculateDurations(normalized);
+    return normalized;
+  }
 
   /**
    * Try to extract transcript segments from the modern YouTube view model DOM
@@ -138,8 +249,9 @@ const TranscriptExtraction = (function() {
 
     const segmentsContainer =
       container.querySelector('#segments-container') ||
-      container.querySelector('[id*="transcript"] #segments-container') ||
       container;
+
+    if (isInsideExtensionPanel(segmentsContainer)) return null;
 
     // Collect every leaf element whose text matches a timestamp
     const all = segmentsContainer.querySelectorAll('*');
@@ -155,6 +267,11 @@ const TranscriptExtraction = (function() {
       let segment = el.parentElement;
       for (let i = 0; i < 5 && segment; i++, segment = segment.parentElement) {
         if (seen.has(segment)) break;
+
+        const timestampLeaves = [...segment.querySelectorAll('*')]
+          .filter(n => n.children.length === 0 && TIMESTAMP_RE.test(n.textContent || ''));
+        if (timestampLeaves.length > 1) continue;
+
         // Grab any sibling/descendant text other than the timestamp itself
         const candidateText = [...segment.querySelectorAll('*')]
           .filter(n => n !== el && n.children.length === 0)
@@ -177,16 +294,35 @@ const TranscriptExtraction = (function() {
     return transcriptData.length > 0 ? transcriptData : null;
   }
 
+  function extractFromTranscriptRoot(root) {
+    const explicitData =
+      extractFromModernDOM(root) ||
+      extractFromLegacyDOM(root);
+    const normalizedExplicit = normalizeTranscriptData(explicitData);
+    if (normalizedExplicit) return normalizedExplicit;
+
+    const genericData = extractFromGenericDOM(root);
+    return normalizeTranscriptData(genericData, MIN_GENERIC_DOM_SEGMENTS);
+  }
+
   /**
    * Run every DOM extractor in order and return the first non-empty result.
    * @returns {Array|null}
    */
   function extractFromAnyDOM() {
-    return (
+    const roots = getNativeTranscriptRoots(document);
+
+    for (const root of roots) {
+      const data = extractFromTranscriptRoot(root);
+      if (data) return data;
+    }
+
+    // Explicit transcript segment elements are safe to scan globally because
+    // they are YouTube-owned elements, unlike timestamp-looking text nodes.
+    const explicitData =
       extractFromModernDOM(document) ||
-      extractFromLegacyDOM(document) ||
-      extractFromGenericDOM(document)
-    );
+      extractFromLegacyDOM(document);
+    return normalizeTranscriptData(explicitData);
   }
 
   /**
@@ -200,7 +336,6 @@ const TranscriptExtraction = (function() {
       const poll = () => {
         const data = extractFromAnyDOM();
         if (data && data.length > 0) {
-          calculateDurations(data);
           resolve(data);
           return;
         }
@@ -221,15 +356,19 @@ const TranscriptExtraction = (function() {
    */
   async function tryOpenTranscriptPanel() {
     const descSelectors = [
-      'ytd-video-description-transcript-section-renderer button',
-      'ytd-video-description-transcript-section-renderer [role="button"]',
-      'ytd-structured-description-content-renderer ytd-video-description-transcript-section-renderer button',
-      '#primary-button ytd-button-renderer button',
+      { selector: 'ytd-video-description-transcript-section-renderer button', requireTranscriptLabel: false },
+      { selector: 'ytd-video-description-transcript-section-renderer [role="button"]', requireTranscriptLabel: false },
+      { selector: 'ytd-structured-description-content-renderer ytd-video-description-transcript-section-renderer button', requireTranscriptLabel: false },
+      { selector: '#primary-button ytd-button-renderer button', requireTranscriptLabel: true },
     ];
-    for (const sel of descSelectors) {
-      const btn = document.querySelector(sel);
-      if (btn) {
-        console.log(`🖱️ Clicking description transcript button (${sel})`);
+
+    for (const { selector, requireTranscriptLabel } of descSelectors) {
+      const buttons = document.querySelectorAll(selector);
+      for (const btn of buttons) {
+        if (!isVisibleElement(btn)) continue;
+        if (requireTranscriptLabel && !isTranscriptTrigger(btn)) continue;
+
+        console.log(`🖱️ Clicking description transcript button (${selector})`);
         btn.click();
         return true;
       }
@@ -247,8 +386,10 @@ const TranscriptExtraction = (function() {
       'yt-button-shape button[aria-label*="transcript" i]',
     ];
     for (const sel of ariaSelectors) {
-      const btn = document.querySelector(sel);
-      if (btn) {
+      const buttons = document.querySelectorAll(sel);
+      for (const btn of buttons) {
+        if (!isVisibleElement(btn)) continue;
+
         console.log(`🖱️ Clicking aria-label transcript button (${sel})`);
         btn.click();
         return true;
@@ -256,28 +397,27 @@ const TranscriptExtraction = (function() {
     }
 
     // Fallback: open the "More actions" menu and look for a Show-transcript item
-    const moreBtn = document.querySelector(
-      'ytd-watch-metadata #button-shape button, ' +
-      'ytd-menu-renderer yt-button-shape button[aria-label*="more" i], ' +
-      '#actions-inner ytd-menu-renderer button'
-    );
+    const moreCandidates = [
+      ...document.querySelectorAll(
+        'ytd-watch-metadata ytd-menu-renderer button, ' +
+        '#actions-inner ytd-menu-renderer button, ' +
+        'ytd-menu-renderer yt-button-shape button'
+      )
+    ].filter(isVisibleElement);
+    const moreBtn =
+      moreCandidates.find(isMoreActionsButton) ||
+      moreCandidates.find(btn => btn.closest('ytd-menu-renderer'));
+
     if (moreBtn) {
       console.log('🖱️ Opening "More actions" menu');
       moreBtn.click();
-      await new Promise(r => setTimeout(r, 400));
+      await new Promise(r => setTimeout(r, 800));
 
       const menuItems = document.querySelectorAll(
-        'ytd-menu-service-item-renderer, tp-yt-paper-item, yt-list-item-view-model'
+        'ytd-menu-service-item-renderer, tp-yt-paper-item, yt-list-item-view-model, [role="menuitem"]'
       );
       for (const item of menuItems) {
-        const label = (item.textContent || '').toLowerCase();
-        if (
-          label.includes('transcript') ||
-          label.includes('transcripción') ||
-          label.includes('transcrição') ||
-          label.includes('transkript') ||
-          label.includes('transcription')
-        ) {
+        if (isVisibleElement(item) && isTranscriptTrigger(item)) {
           console.log('🖱️ Clicking "Show transcript" menu item');
           item.click();
           return true;
@@ -298,10 +438,10 @@ const TranscriptExtraction = (function() {
     if (!panelWasOpened) return;
 
     console.log('🔒 Closing native transcript panel...');
-    const panels = document.querySelectorAll(
-      'ytd-engagement-panel-section-list-renderer[target-id*="transcript" i], ' +
-      'ytd-engagement-panel-section-list-renderer[target-id="PAmodern_transcript_view"]'
-    );
+    const panels = getNativeTranscriptRoots(document)
+      .map(root => root.closest?.('ytd-engagement-panel-section-list-renderer') || root)
+      .filter((panel, index, all) => panel && all.indexOf(panel) === index);
+
     for (const panel of panels) {
       const closeBtn = panel.querySelector(
         'button[aria-label*="Close" i], ' +
@@ -323,11 +463,10 @@ const TranscriptExtraction = (function() {
     try {
       console.log('🔍 Trying to extract transcript from YouTube DOM...');
 
-      // Already-rendered segments anywhere on the page (panel already opened)
+      // Already-rendered segments in YouTube's native transcript panel.
       let data = extractFromAnyDOM();
       if (data) {
         console.log(`✓ Extracted ${data.length} entries from DOM (already visible)`);
-        calculateDurations(data);
         return data;
       }
 
